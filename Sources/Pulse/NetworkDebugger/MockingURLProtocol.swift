@@ -12,8 +12,8 @@ public final class MockingURLProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didFailWithError: URLError(.unknown)) // Should never happen
             return
         }
-        DispatchQueue.main.async {
-            RemoteLogger.shared.getMockedResponse(for: mock) { [weak self] in
+        DispatchQueue.main.async { [weak self] in
+            RemoteLogger.shared.getMockedResponse(for: mock) {
                 self?.didReceiveResponse($0)
             }
         }
