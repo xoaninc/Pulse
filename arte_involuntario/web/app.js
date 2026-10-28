@@ -79,7 +79,7 @@ async function iniciar() {
   S.cats.forEach(c => (S.nombres[c.id] = c.nombre));
   S.sel = await api("/api/seleccion");
   S.sel.arte = S.sel.arte || [];
-  S.sel.paseo = Object.assign({ id: null, titulo: "", linea: "", fotos: [], mayusculas: true, dibujo: true, diseno: "rejilla" }, S.sel.paseo || {});
+  S.sel.paseo = Object.assign({ id: null, titulo: "", linea: "", fotos: [], mayusculas: true, dibujo: true, datos: true, diseno: "rejilla", k: 12 }, S.sel.paseo || {});
   S.sel.opciones = Object.assign({ orden: "categoria", contraste: "normal", cabecera: true }, S.sel.opciones || {});
   S.sel.autor = S.sel.autor || "";
   const est = S.estado.estadisticas || {};
@@ -141,7 +141,9 @@ async function elegirCategoria(id) {
   $("#cab-categoria").innerHTML = "";
   $("#cab-categoria").append(
     h("h2", {}, c.nombre),
-    h("div", { class: "def" }, c.definicion ? `«${c.definicion}»` : ""),
+    c.definicion && c.definicion.length > 420
+      ? h("details", { class: "def" }, h("summary", {}, `«${c.definicion.slice(0, 300).replace(/\s+\S*$/, "")}…»`), c.definicion)
+      : h("div", { class: "def" }, c.definicion ? `«${c.definicion}»` : ""),
     h("p", { class: "ayuda" }, c.descripcion || ""),
     c.consejos && c.consejos.length ? h("details", {}, h("summary", {}, "Qué buscar"), h("ul", {}, c.consejos.map(x => h("li", {}, x)))) : "");
   pintarSugerencias(c);
@@ -429,13 +431,13 @@ function pintarPaseos() {
 
 async function abrirPaseo(id) {
   $("#cab-paseo").innerHTML = "<p class='ayuda'>Cargando…</p>";
-  const r = await api(`/api/paseo?id=${encodeURIComponent(id)}&k=12`);
+  const r = await api(`/api/paseo?id=${encodeURIComponent(id)}&k=${S.sel.paseo.k || 12}`);
   S.paseo = r;
   const P = S.sel.paseo;
   if (P.id !== id) {
     const fichas = Object.fromEntries(r.todas.map(f => [f.uuid, f]));
     P.id = id;
-    P.fotos = r.sugeridas.map(u => ({ uuid: u, frase: fichas[u].frase, recorte: { cx: 0.5, cy: 0.5, zoom: 1 }, km: fichas[u].km, alt: fichas[u].alt }));
+    P.fotos = r.sugeridas.map(u => nuevaFotoPaseo(fichas[u]));
     P.titulo = (r.titulos && r.titulos[0]) || "";
     P.linea = r.linea || "";
     guardar();
@@ -444,6 +446,12 @@ async function abrirPaseo(id) {
   pintarPaseo();
 }
 
+function nuevaFotoPaseo(f) {
+  return { uuid: f.uuid, frase: f.frase, recorte: { cx: 0.5, cy: 0.5, zoom: 1 }, km: f.km, alt: f.alt, hora: f.hora };
+}
+function datosFoto(f) {
+  return [f.hora, f.km != null ? `km ${f.km.toFixed(1).replace(".", ",")}` : "", f.alt != null ? `${Math.round(f.alt)} m` : ""].filter(Boolean).join(" · ");
+}
 function fichaPaseo(uuid) { return S.paseo.todas.find(f => f.uuid === uuid); }
 function ordenarPaseo() {
   const pos = Object.fromEntries(S.paseo.todas.map((f, i) => [f.uuid, i]));
@@ -460,6 +468,9 @@ function pintarPaseo() {
       ". Haz clic en las fotos para añadirlas o quitarlas (mínimo 12). La primera será el ORIGEN y la última el FINAL. Las grises tenues son selfies/capturas."),
     h("div", { class: "form-fila" },
       h("button", { class: "sec", onclick: () => { P.id = null; abrirPaseo(p.id); } }, "↺ Volver a la propuesta automática"),
+      h("label", { style: "flex-direction:row;align-items:center;gap:6px" }, "Proponer",
+        h("select", { onchange: e => { P.k = parseInt(e.target.value, 10); P.id = null; guardar(); abrirPaseo(p.id); } },
+          [12, 14, 16].map(k => h("option", { value: k, selected: (P.k || 12) === k }, `${k} fotos`)))),
       h("span", { class: "ayuda" }, `Elegidas: ${P.fotos.length}` + (P.fotos.length < MIN_PASEO ? ` (faltan ${MIN_PASEO - P.fotos.length})` : " ✓"))));
   const grid = $("#paseo-fotos");
   grid.innerHTML = "";
@@ -479,7 +490,7 @@ function alternarPaseo(f) {
   const P = S.sel.paseo;
   const i = P.fotos.findIndex(x => x.uuid === f.uuid);
   if (i >= 0) P.fotos.splice(i, 1);
-  else { P.fotos.push({ uuid: f.uuid, frase: f.frase, recorte: { cx: 0.5, cy: 0.5, zoom: 1 }, km: f.km, alt: f.alt }); ordenarPaseo(); }
+  else { P.fotos.push(nuevaFotoPaseo(f)); ordenarPaseo(); }
   guardar();
   pintarPaseo();
 }
@@ -496,19 +507,19 @@ function pintarEditorPaseo() {
     h("option", { value: "crece", selected: P.diseno === "crece" }, "Las fotos crecen con el recorrido (H. Sear)"));
   cont.append(h("div", { class: "editor-paseo" },
     h("h3", {}, "Textos al estilo Hamish Fulton"),
-    h("p", { class: "ayuda" }, "Fulton titula cada obra con UNA palabra (LIZARDS, CLOUDS, ROAD) y una línea que describe la caminata. Bajo cada foto, una frase sobria con algo singular de ese momento."),
+    h("p", { class: "ayuda" }, "Fulton titula cada obra con UNA palabra (LIZARDS, CLOUDS, ROAD) y una línea factual que describe la caminata. Bajo cada foto: una frase sobria, en presente, con algo singular de ese momento («Un buitre gira sobre el collado», «Huele a jara»). Los borradores los propone el ordenador: cámbialos por lo que pasó de verdad."),
     h("div", { class: "form-fila" },
       h("label", {}, "Palabra-título", titulo),
       h("div", { class: "chips", style: "max-height:none" }, (r.titulos || []).map(t => h("button", { class: "chip", onclick: () => { P.titulo = t; titulo.value = t; guardar(); } }, t)))),
     h("label", { style: "display:block;margin-bottom:10px;font-size:13px" }, "Línea de la caminata", linea),
-    h("div", { class: "form-fila" }, chk("mayusculas", "Frases en MAYÚSCULAS (como Fulton)"), chk("dibujo", "Dibujar el recorrido/perfil (GPS)"), h("label", {}, "Diseño", diseno),
+    h("div", { class: "form-fila" }, chk("mayusculas", "Frases en MAYÚSCULAS (como Fulton)"), chk("datos", "Hora · km · altitud bajo cada foto"), chk("dibujo", "Dibujar el recorrido/perfil (GPS)"), h("label", {}, "Diseño", diseno),
       S.estado.ia ? h("button", { class: "sec", onclick: frasesIA }, "✨ Proponer frases con IA") : ""),
     h("div", { class: "frases" }, P.fotos.map((f, k) => {
       const fi = fichaPaseo(f.uuid) || {};
       const marca = k === 0 ? "ORIGEN" : (k === P.fotos.length - 1 ? "FINAL" : String(k + 1).padStart(2, "0"));
       return h("div", { class: "frase" },
         h("div", { class: "mini", style: `background-image:url('${mini(f.uuid, 160)}')`, title: "Recortar", onclick: () => editorRecorte({ uuid: f.uuid, recorte: f.recorte, bn: true, alGuardar: rr => { f.recorte = rr; guardar(); } }) }),
-        h("div", {}, h("div", { class: "marca" }, marca + (fi.hora ? ` · ${fi.hora}` : "")),
+        h("div", {}, h("div", { class: "marca" }, marca, h("span", { class: "ayuda", style: "font-weight:400;letter-spacing:0;margin-left:6px" }, datosFoto(Object.assign({}, fi, f)))),
           h("textarea", { rows: 2, oninput: e => { f.frase = e.target.value; guardar(); } }, f.frase || ""),
           fi.suceso ? h("div", { class: "ayuda", style: "margin:2px 0 0" }, `sugerencia: ${fi.suceso.frase}`) : ""));
     }))));
@@ -522,10 +533,7 @@ async function frasesIA() {
     const res = d.resultado || {};
     P.fotos.forEach(f => {
       const x = res[f.uuid];
-      if (x && x.frase) {
-        const cab = (f.frase || "").split(" — ")[0];
-        f.frase = cab && cab !== f.frase ? `${cab} — ${x.frase}` : x.frase;
-      }
+      if (x && x.frase) f.frase = x.frase;
     });
     const pal = Object.values(res).map(x => x.palabra).filter(Boolean);
     if (pal.length) S.paseo.titulos = [...new Set(pal.concat(S.paseo.titulos || []))].slice(0, 10);

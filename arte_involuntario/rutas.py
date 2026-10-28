@@ -29,6 +29,7 @@ def preparar() -> None:
     # Los modelos de Hugging Face se guardan dentro del proyecto, no en ~/.cache
     os.environ.setdefault("HF_HOME", str(MODELOS))
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 

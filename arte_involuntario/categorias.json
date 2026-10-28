@@ -1099,70 +1099,812 @@
  },
  "paseo": {
   "prompts_naturaleza": [
-   "a photo of a mountain landscape",
-   "a photo of a forest path",
-   "a photo of a meadow",
-   "a photo of a hiking trail",
-   "a photo of a river in nature",
-   "a photo of fields in the countryside",
-   "a photo of a rocky hillside"
+   "a photo of a natural landscape",
+   "a photo of a rural countryside landscape",
+   "a photo of a hiking trail in the mountains",
+   "a photo of a dirt path through a meadow",
+   "a photo of a pine forest",
+   "a photo of a mountain range under a cloudy sky",
+   "a photo of rolling hills with farm fields",
+   "a photo of a dehesa pasture with scattered holm oaks in Spain",
+   "a photo of a granite mountain landscape with big boulders",
+   "a photo of a river flowing through a green valley",
+   "a photo of a mountain stream running over rocks",
+   "a photo of a lake surrounded by mountains",
+   "a photo of a green wheat field in spring",
+   "a photo of dry golden fields in summer in the Spanish countryside",
+   "a photo of a coastal footpath on top of cliffs above the sea",
+   "a photo of a wild beach with dunes and no buildings",
+   "a photo of a snowy mountain landscape",
+   "a photo of foggy hills at dawn",
+   "a photo of an alpine meadow with wildflowers",
+   "a photo of a deciduous forest in autumn colours",
+   "a photo of a rocky mountain summit with a wide view",
+   "a photo of olive groves on a hillside",
+   "a photo of a vineyard landscape",
+   "a photo of a gorge with a river between cliffs",
+   "a photo of a moorland with heather and rocks",
+   "a photo of Mediterranean scrubland with rockrose and broom bushes",
+   "a photo of a country lane between stone walls",
+   "a photo of farmland seen from a hilltop",
+   "a photo of a rural landscape with a small village far away",
+   "a photo of a valley seen from a mountain pass",
+   "a photo of a hiker walking on a mountain trail",
+   "a photo of a wetland with reeds and water",
+   "a photo of a riverside path lined with poplar trees",
+   "a photo of an empty open landscape with a wide horizon",
+   "a photo of a cattle pasture with cows in the mountains",
+   "a photo of a forest track in the countryside"
   ],
   "prompts_urbano": [
-   "a photo of a city street",
-   "a photo of a room interior",
-   "a photo of buildings in a town",
-   "a photo of a restaurant",
-   "a photo of a shopping mall"
+   "a photo of a city street with buildings and cars",
+   "a photo of an urban square with people",
+   "a photo of the interior of a house",
+   "a photo of a living room or bedroom",
+   "a photo of a plate of food on a table",
+   "a photo of a restaurant or a bar interior",
+   "a selfie of a person's face",
+   "a photo of a group of friends posing for the camera",
+   "a portrait of a person indoors",
+   "a screenshot of a phone screen",
+   "a screenshot of a chat conversation",
+   "a photo of a document or a page of text",
+   "a photo of a receipt, a ticket or a card",
+   "a photo of slides or a whiteboard in a classroom",
+   "a photo of a computer screen or a laptop",
+   "a photo of a shop or a shopping mall interior",
+   "a photo of a concert or a nightclub at night",
+   "a photo of the inside of a car",
+   "a photo of an airport or a train station interior",
+   "a photo of a museum gallery interior",
+   "a photo of a party with drinks",
+   "a photo of a pet on a sofa at home",
+   "a photo of a hotel swimming pool",
+   "a photo of a crowded tourist beach with umbrellas and buildings",
+   "a photo of a parking lot",
+   "a photo of a supermarket aisle",
+   "a meme or an image with large text",
+   "a photo of an architectural model or a technical drawing",
+   "a photo of a gym interior",
+   "a photo of a busy road with traffic"
   ],
   "prompts_camino": [
-   "a photo of a dirt track receding to the horizon",
-   "a photo of a footpath through a meadow",
-   "a photo of a trail through a forest"
+   "a photo of a dirt track receding towards the horizon",
+   "a photo of a narrow footpath through a meadow seen from the walker's point of view",
+   "a photo of a straight country road disappearing into the distance",
+   "a photo of a forest path leading into the trees",
+   "a photo of a mountain trail winding up a slope",
+   "a photo of a path between two dry stone walls",
+   "a photo of a farm track with two wheel ruts and grass in the middle",
+   "a photo of a gravel path through pine trees",
+   "a photo of a trail crossing an open plateau",
+   "a photo of a path along a ridge with a wide view",
+   "a photo of a sunken lane between hedges",
+   "a photo of a coastal footpath along the cliffs",
+   "a photo of a snowy path with footprints",
+   "a photo of a path with a signpost at a junction",
+   "a photo of an old stone-paved road in the countryside",
+   "a photo of a long straight path with a single tree at the end",
+   "a black and white photograph of an empty road in a rural landscape",
+   "a photo of a path through tall grass with a centred composition",
+   "a photo of a wooden boardwalk through a wetland",
+   "a photo of a riverside track lined with trees",
+   "a photo of a single round hay bale in the centre of a field",
+   "a photo of a path seen from above winding through the landscape"
   ],
   "sucesos": [
    {
-    "prompt": "a photo of clouds in the sky",
-    "frase": "Pasan nubes",
+    "prompt": "a photo of low clouds hanging over green hills in the countryside",
+    "frase": "Nubes bajas sobre las lomas",
     "palabra": "NUBES"
    },
    {
-    "prompt": "a photo of a dog on a path",
+    "prompt": "a photo of big white cumulus clouds over an open field",
+    "frase": "Grandes nubes blancas sobre el campo",
+    "palabra": "CÚMULOS"
+   },
+   {
+    "prompt": "a photo of a single small cloud in a clear blue sky above the hills",
+    "frase": "Una sola nube en todo el cielo",
+    "palabra": "NUBE"
+   },
+   {
+    "prompt": "a photo of thick fog filling a valley seen from above",
+    "frase": "La niebla llena el valle",
+    "palabra": "NIEBLA"
+   },
+   {
+    "prompt": "a photo of a path disappearing into dense fog",
+    "frase": "El camino se pierde en la niebla",
+    "palabra": "NIEBLA"
+   },
+   {
+    "prompt": "a photo of mist between pine trees in a forest",
+    "frase": "Bruma entre los pinos",
+    "palabra": "BRUMA"
+   },
+   {
+    "prompt": "a photo of rain falling on a country road, wet ground and grey sky",
+    "frase": "Empieza a llover",
+    "palabra": "LLUVIA"
+   },
+   {
+    "prompt": "a photo of raindrops on leaves and grass close-up",
+    "frase": "Gotas de lluvia sobre las hojas",
+    "palabra": "GOTAS"
+   },
+   {
+    "prompt": "a photo of puddles on a dirt track reflecting the sky",
+    "frase": "Charcos en la pista reflejan el cielo",
+    "palabra": "CHARCOS"
+   },
+   {
+    "prompt": "a photo of a thin sheet of ice on a puddle",
+    "frase": "Hielo en el charco",
+    "palabra": "HIELO"
+   },
+   {
+    "prompt": "a photo of white frost covering the grass in the morning",
+    "frase": "Escarcha sobre la hierba",
+    "palabra": "ESCARCHA"
+   },
+   {
+    "prompt": "a photo of a footpath covered in snow in the mountains",
+    "frase": "La nieve cubre el sendero",
+    "palabra": "NIEVE"
+   },
+   {
+    "prompt": "a photo of footprints in fresh snow",
+    "frase": "Huellas recientes en la nieve",
+    "palabra": "HUELLAS"
+   },
+   {
+    "prompt": "a photo of snow-capped mountain peaks in the distance",
+    "frase": "Nieve en las cumbres lejanas",
+    "palabra": "CUMBRES"
+   },
+   {
+    "prompt": "a photo of tall grass bending in strong wind",
+    "frase": "El viento peina la hierba alta",
+    "palabra": "VIENTO"
+   },
+   {
+    "prompt": "a photo of a rainbow over the countryside",
+    "frase": "Un arcoíris sobre el campo",
+    "palabra": "ARCOÍRIS"
+   },
+   {
+    "prompt": "a photo of dark storm clouds approaching over fields",
+    "frase": "Se acerca la tormenta",
+    "palabra": "TORMENTA"
+   },
+   {
+    "prompt": "a photo of sun rays breaking through clouds over a landscape",
+    "frase": "Rayos de sol entre las nubes",
+    "palabra": "RAYOS"
+   },
+   {
+    "prompt": "a photo of the sun setting behind a mountain ridge",
+    "frase": "El sol se pone tras la sierra",
+    "palabra": "OCASO"
+   },
+   {
+    "prompt": "a photo of dawn light over misty hills at sunrise",
+    "frase": "Amanece sobre las lomas",
+    "palabra": "AMANECER"
+   },
+   {
+    "prompt": "a photo of the moon in the sky above a hill at dusk",
+    "frase": "La luna sale sobre el monte",
+    "palabra": "LUNA"
+   },
+   {
+    "prompt": "a photo of airplane contrails crossing a blue sky",
+    "frase": "Dos estelas de avión cruzan el cielo",
+    "palabra": "ESTELAS"
+   },
+   {
+    "prompt": "a photo of dust rising from a dry dirt road in summer",
+    "frase": "Polvo en el camino",
+    "palabra": "POLVO"
+   },
+   {
+    "prompt": "a photo of the lights of a village at dusk seen from a hill",
+    "frase": "Se encienden las luces del pueblo",
+    "palabra": "ANOCHECER"
+   },
+   {
+    "prompt": "a photo of a flock of birds flying across the sky",
+    "frase": "Una bandada cruza el cielo",
+    "palabra": "BANDADA"
+   },
+   {
+    "prompt": "a photo of a small bird perched on a fence post",
+    "frase": "Un pájaro se posa en el poste",
+    "palabra": "PÁJARO"
+   },
+   {
+    "prompt": "a photo of small birds in a bush",
+    "frase": "Pájaros pequeños cantan en los arbustos",
+    "palabra": "PÁJAROS"
+   },
+   {
+    "prompt": "a photo of vultures circling high in the sky above mountains",
+    "frase": "Buitres planean en círculo",
+    "palabra": "BUITRES"
+   },
+   {
+    "prompt": "a photo of a bird of prey hovering over a field",
+    "frase": "Un cernícalo se queda quieto en el aire",
+    "palabra": "CERNÍCALO"
+   },
+   {
+    "prompt": "a photo of storks on a big nest on top of a tower or pole",
+    "frase": "Cigüeñas en el nido",
+    "palabra": "CIGÜEÑAS"
+   },
+   {
+    "prompt": "a photo of a heron standing at the edge of a river",
+    "frase": "Una garza en la orilla",
+    "palabra": "GARZA"
+   },
+   {
+    "prompt": "a photo of ducks swimming on a pond",
+    "frase": "Patos en la charca",
+    "palabra": "PATOS"
+   },
+   {
+    "prompt": "a photo of a flock of sheep crossing a country path",
+    "frase": "Un rebaño de ovejas corta el camino",
+    "palabra": "OVEJAS"
+   },
+   {
+    "prompt": "a photo of cows grazing in a meadow next to a path",
+    "frase": "Vacas pastan junto al sendero",
+    "palabra": "VACAS"
+   },
+   {
+    "prompt": "a photo of a cow staring directly at the camera",
+    "frase": "Una vaca se queda mirando",
+    "palabra": "MIRADA"
+   },
+   {
+    "prompt": "a photo of horses standing in a field",
+    "frase": "Caballos en el prado",
+    "palabra": "CABALLOS"
+   },
+   {
+    "prompt": "a photo of a donkey behind a fence",
+    "frase": "Un burro junto a la cerca",
+    "palabra": "BURRO"
+   },
+   {
+    "prompt": "a photo of a black bull in a pasture with holm oaks",
+    "frase": "Un toro a lo lejos",
+    "palabra": "TORO"
+   },
+   {
+    "prompt": "a photo of goats standing on rocks on a hillside",
+    "frase": "Cabras sobre las rocas",
+    "palabra": "CABRAS"
+   },
+   {
+    "prompt": "a photo of chickens in a farmyard",
+    "frase": "Gallinas sueltas en la era",
+    "palabra": "GALLINAS"
+   },
+   {
+    "prompt": "a photo of a deer among trees in a forest",
+    "frase": "Un corzo salta entre los árboles",
+    "palabra": "CORZO"
+   },
+   {
+    "prompt": "a photo of a dog crossing a dirt path in the countryside",
     "frase": "Un perro cruza el camino",
     "palabra": "PERRO"
    },
    {
-    "prompt": "a photo of sheep grazing",
-    "frase": "Ovejas pastando",
-    "palabra": "OVEJAS"
+    "prompt": "a photo of a dog walking ahead on a trail",
+    "frase": "Un perro nos acompaña un tramo",
+    "palabra": "COMPAÑÍA"
    },
    {
-    "prompt": "a photo of a puddle on a dirt road",
-    "frase": "Charcos en el camino",
-    "palabra": "CHARCOS"
+    "prompt": "a photo of a cat sitting on a stone wall",
+    "frase": "Un gato sobre el muro",
+    "palabra": "GATO"
    },
    {
-    "prompt": "a photo of a stream",
-    "frase": "Cruzamos un arroyo",
-    "palabra": "ARROYO"
+    "prompt": "a photo of a lizard on a sunny rock",
+    "frase": "Una lagartija toma el sol en la piedra",
+    "palabra": "LAGARTIJA"
    },
    {
-    "prompt": "a photo of a mountain summit view",
-    "frase": "Llegada a la cima",
+    "prompt": "a photo of a toad or frog on a path",
+    "frase": "Un sapo en mitad del camino",
+    "palabra": "SAPO"
+   },
+   {
+    "prompt": "a photo of a butterfly resting on a wildflower",
+    "frase": "Una mariposa se posa en una flor",
+    "palabra": "MARIPOSA"
+   },
+   {
+    "prompt": "a photo of a dragonfly near water",
+    "frase": "Una libélula sobre el agua",
+    "palabra": "LIBÉLULA"
+   },
+   {
+    "prompt": "a photo of a snail on a path or a stone",
+    "frase": "Un caracol cruza el sendero",
+    "palabra": "CARACOL"
+   },
+   {
+    "prompt": "a photo of a procession of caterpillars crossing a path under pine trees",
+    "frase": "Una procesión de orugas cruza el sendero",
+    "palabra": "ORUGAS"
+   },
+   {
+    "prompt": "a photo of a spider web covered with dew drops",
+    "frase": "Una telaraña con rocío",
+    "palabra": "TELARAÑA"
+   },
+   {
+    "prompt": "a photo of beehives on a hillside",
+    "frase": "Colmenas en la ladera",
+    "palabra": "COLMENAS"
+   },
+   {
+    "prompt": "a photo of a bird feather lying on the ground",
+    "frase": "Una pluma en el suelo",
+    "palabra": "PLUMA"
+   },
+   {
+    "prompt": "a photo of animal footprints in mud",
+    "frase": "Huellas de animal en el barro",
+    "palabra": "RASTRO"
+   },
+   {
+    "prompt": "a photo of animal bones or a skull on the ground in the countryside",
+    "frase": "Huesos al borde del camino",
+    "palabra": "HUESOS"
+   },
+   {
+    "prompt": "a photo of a trailhead information board at the start of a hiking path",
+    "frase": "Inicio del sendero",
+    "palabra": "INICIO"
+   },
+   {
+    "prompt": "a photo of a fork in a dirt path in the countryside",
+    "frase": "El camino se bifurca",
+    "palabra": "BIFURCACIÓN"
+   },
+   {
+    "prompt": "a photo of a closed metal farm gate across a dirt track",
+    "frase": "Una cancela cierra el paso",
+    "palabra": "CANCELA"
+   },
+   {
+    "prompt": "a photo of an open wooden gate on a footpath",
+    "frase": "Atravieso la portilla",
+    "palabra": "PORTILLA"
+   },
+   {
+    "prompt": "a photo of a cattle grid on a rural road",
+    "frase": "Un paso canadiense",
+    "palabra": "PASO CANADIENSE"
+   },
+   {
+    "prompt": "a photo of a small old stone bridge over a stream",
+    "frase": "Cruzo el puente de piedra",
+    "palabra": "PUENTE"
+   },
+   {
+    "prompt": "a photo of a wooden footbridge over a river",
+    "frase": "Una pasarela de madera sobre el río",
+    "palabra": "PASARELA"
+   },
+   {
+    "prompt": "a photo of stepping stones across a shallow stream",
+    "frase": "Cruzo el arroyo por las piedras",
+    "palabra": "VADO"
+   },
+   {
+    "prompt": "a photo of a dirt track crossing a shallow ford with water",
+    "frase": "El camino atraviesa el agua",
+    "palabra": "AGUA"
+   },
+   {
+    "prompt": "a photo of a wooden signpost with direction arrows on a hiking trail",
+    "frase": "Un poste indica la dirección",
+    "palabra": "DIRECCIÓN"
+   },
+   {
+    "prompt": "a photo of a red and white trail marker painted on a rock or a tree",
+    "frase": "Marca blanca y roja en la piedra",
+    "palabra": "MARCA"
+   },
+   {
+    "prompt": "a photo of a yellow arrow painted on a wall or stone",
+    "frase": "Una flecha amarilla señala el camino",
+    "palabra": "FLECHA"
+   },
+   {
+    "prompt": "a photo of a cairn, a small pile of stones marking a trail",
+    "frase": "Un hito de piedras",
+    "palabra": "HITO"
+   },
+   {
+    "prompt": "a photo of an old stone milestone at the side of a road",
+    "frase": "Un mojón marca la distancia",
+    "palabra": "MOJÓN"
+   },
+   {
+    "prompt": "a photo of stone steps on a mountain trail",
+    "frase": "Escalones de piedra",
+    "palabra": "ESCALONES"
+   },
+   {
+    "prompt": "a photo of a trail zigzagging up a steep slope",
+    "frase": "El sendero zigzaguea ladera arriba",
+    "palabra": "ZIGZAG"
+   },
+   {
+    "prompt": "a photo of a straight dirt track disappearing at the horizon",
+    "frase": "La pista se pierde en el horizonte",
+    "palabra": "HORIZONTE"
+   },
+   {
+    "prompt": "a photo of a narrow path through tall grass",
+    "frase": "Senda entre la hierba alta",
+    "palabra": "SENDA"
+   },
+   {
+    "prompt": "a photo of a path under a tunnel of trees",
+    "frase": "Un túnel de árboles",
+    "palabra": "TÚNEL"
+   },
+   {
+    "prompt": "a photo of a muddy path with boot prints",
+    "frase": "Barro y huellas de botas",
+    "palabra": "BARRO"
+   },
+   {
+    "prompt": "a photo of a rocky path covered with loose stones",
+    "frase": "Piedras sueltas bajo los pies",
+    "palabra": "PEDREGAL"
+   },
+   {
+    "prompt": "a photo of a path following a river bank",
+    "frase": "El camino sigue el río",
+    "palabra": "RÍO"
+   },
+   {
+    "prompt": "a photo of a railway line crossing the countryside",
+    "frase": "Cruzo la vía del tren",
+    "palabra": "VÍA"
+   },
+   {
+    "prompt": "a photo of a fallen tree lying across a path",
+    "frase": "Un árbol caído corta el sendero",
+    "palabra": "ÁRBOL CAÍDO"
+   },
+   {
+    "prompt": "a photo of hiking boots and a backpack resting on the grass",
+    "frase": "Descanso con las botas en la hierba",
+    "palabra": "DESCANSO"
+   },
+   {
+    "prompt": "a photo of the photographer's own shadow on a dirt path",
+    "frase": "Mi sombra camina delante",
+    "palabra": "SOMBRA"
+   },
+   {
+    "prompt": "a photo of a person walking away on a trail, seen from behind",
+    "frase": "Ella camina delante",
+    "palabra": "CAMINANTE"
+   },
+   {
+    "prompt": "a photo of distant hikers walking on a ridge",
+    "frase": "Otros caminantes a lo lejos",
+    "palabra": "CAMINANTES"
+   },
+   {
+    "prompt": "a photo of a cyclist on a gravel road in the countryside",
+    "frase": "Pasa un ciclista",
+    "palabra": "CICLISTA"
+   },
+   {
+    "prompt": "a photo of long shadows of trees across a path at low sun",
+    "frase": "Sombras largas sobre el camino",
+    "palabra": "SOMBRAS"
+   },
+   {
+    "prompt": "a photo of backlit grass and seed heads glowing in the sun",
+    "frase": "La hierba brilla a contraluz",
+    "palabra": "CONTRALUZ"
+   },
+   {
+    "prompt": "a photo of sunlight streaming through trees in a forest",
+    "frase": "El sol atraviesa los pinos",
+    "palabra": "LUZ"
+   },
+   {
+    "prompt": "a photo of dappled sunlight on a forest path",
+    "frase": "Manchas de luz en el sendero",
+    "palabra": "MANCHAS"
+   },
+   {
+    "prompt": "a photo of a low sun shining straight into the camera over a landscape",
+    "frase": "El sol bajo, de frente",
+    "palabra": "SOL"
+   },
+   {
+    "prompt": "a photo of golden evening light on fields",
+    "frase": "Luz de tarde sobre los campos",
+    "palabra": "TARDE"
+   },
+   {
+    "prompt": "a photo of a lone tree silhouetted on a ridge",
+    "frase": "Un árbol solo en la loma",
+    "palabra": "ÁRBOL"
+   },
+   {
+    "prompt": "a photo of almond trees in blossom",
+    "frase": "Almendros en flor",
+    "palabra": "ALMENDROS"
+   },
+   {
+    "prompt": "a photo of a tree in white spring blossom",
+    "frase": "Un cerezo en flor",
+    "palabra": "FLOR"
+   },
+   {
+    "prompt": "a photo of red poppies at the edge of a field",
+    "frase": "Amapolas en la cuneta",
+    "palabra": "AMAPOLAS"
+   },
+   {
+    "prompt": "a photo of dry thistles against the sky",
+    "frase": "Cardos secos",
+    "palabra": "CARDOS"
+   },
+   {
+    "prompt": "a photo of mushrooms growing on the forest floor",
+    "frase": "Setas al pie del pino",
+    "palabra": "SETAS"
+   },
+   {
+    "prompt": "a photo of fallen autumn leaves covering a path",
+    "frase": "Hojas caídas cubren la senda",
+    "palabra": "HOJAS"
+   },
+   {
+    "prompt": "a photo of yellow flowering broom bushes on a mountainside",
+    "frase": "Florece la retama",
+    "palabra": "RETAMA"
+   },
+   {
+    "prompt": "a photo of wild thyme and lavender bushes",
+    "frase": "Huele a tomillo",
+    "palabra": "TOMILLO"
+   },
+   {
+    "prompt": "a photo of a wheat field moving in the wind",
+    "frase": "El trigo se mueve con el viento",
+    "palabra": "TRIGO"
+   },
+   {
+    "prompt": "a photo of a golden stubble field after harvest",
+    "frase": "Rastrojo dorado",
+    "palabra": "RASTROJO"
+   },
+   {
+    "prompt": "a photo of a field of sunflowers",
+    "frase": "Girasoles vueltos hacia el sol",
+    "palabra": "GIRASOLES"
+   },
+   {
+    "prompt": "a photo of a single old holm oak in a pasture",
+    "frase": "Una encina sola en la dehesa",
+    "palabra": "ENCINA"
+   },
+   {
+    "prompt": "a photo of rows of olive trees on a hillside",
+    "frase": "Hileras de olivos",
+    "palabra": "OLIVOS"
+   },
+   {
+    "prompt": "a photo of vineyard rows in the countryside",
+    "frase": "Hileras de viñas",
+    "palabra": "VIÑAS"
+   },
+   {
+    "prompt": "a photo of pine cones on the ground",
+    "frase": "Piñas en el suelo",
+    "palabra": "PIÑAS"
+   },
+   {
+    "prompt": "a photo of green moss covering rocks",
+    "frase": "Musgo en las piedras",
+    "palabra": "MUSGO"
+   },
+   {
+    "prompt": "a photo of lichen on a granite boulder",
+    "frase": "Líquenes en el granito",
+    "palabra": "LÍQUENES"
+   },
+   {
+    "prompt": "a photo of a dandelion seed head close-up",
+    "frase": "Un diente de león",
+    "palabra": "SEMILLAS"
+   },
+   {
+    "prompt": "a photo of blackberries on a bramble bush",
+    "frase": "Moras en la zarza",
+    "palabra": "MORAS"
+   },
+   {
+    "prompt": "a photo of a hollow old tree trunk",
+    "frase": "Un tronco hueco",
+    "palabra": "TRONCO"
+   },
+   {
+    "prompt": "a photo of burnt trees after a forest fire",
+    "frase": "Árboles quemados",
+    "palabra": "INCENDIO"
+   },
+   {
+    "prompt": "a photo of a barbed wire fence running along a path",
+    "frase": "Una alambrada sigue el camino",
+    "palabra": "ALAMBRADA"
+   },
+   {
+    "prompt": "a photo of a dry stone wall in the countryside",
+    "frase": "Un muro de piedra seca",
+    "palabra": "MURO"
+   },
+   {
+    "prompt": "a photo of an abandoned stone hut in the mountains",
+    "frase": "Una cabaña abandonada",
+    "palabra": "RUINA"
+   },
+   {
+    "prompt": "a photo of an empty stone livestock pen",
+    "frase": "Un corral de piedra vacío",
+    "palabra": "CORRAL"
+   },
+   {
+    "prompt": "a photo of tractor tyre ruts in a muddy field",
+    "frase": "Rodadas de tractor en el barro",
+    "palabra": "RODADAS"
+   },
+   {
+    "prompt": "a photo of a tractor working in a distant field",
+    "frase": "Un tractor ara a lo lejos",
+    "palabra": "TRACTOR"
+   },
+   {
+    "prompt": "a photo of round hay bales scattered in a field",
+    "frase": "Pacas de paja en el campo",
+    "palabra": "PACAS"
+   },
+   {
+    "prompt": "a photo of a wooden bench facing a valley view",
+    "frase": "Un banco mira al valle",
+    "palabra": "BANCO"
+   },
+   {
+    "prompt": "a photo of a stone drinking fountain on a trail",
+    "frase": "Bebo en la fuente",
+    "palabra": "FUENTE"
+   },
+   {
+    "prompt": "a photo of a stone water trough for cattle",
+    "frase": "Un abrevadero",
+    "palabra": "ABREVADERO"
+   },
+   {
+    "prompt": "a photo of electricity pylons and power lines crossing the countryside",
+    "frase": "Torres de alta tensión cruzan el valle",
+    "palabra": "TENDIDO"
+   },
+   {
+    "prompt": "a photo of wind turbines on a ridge",
+    "frase": "Molinos en la cresta",
+    "palabra": "MOLINOS"
+   },
+   {
+    "prompt": "a photo of a small rural chapel in the countryside",
+    "frase": "Una ermita",
+    "palabra": "ERMITA"
+   },
+   {
+    "prompt": "a photo of a concrete survey pillar on a mountain summit",
+    "frase": "Vértice geodésico en la cumbre",
+    "palabra": "CUMBRE"
+   },
+   {
+    "prompt": "a photo of a wide view from a mountain summit over a valley",
+    "frase": "Desde la cima se ve todo el valle",
     "palabra": "CIMA"
    },
    {
-    "prompt": "a photo of a wooden signpost",
-    "frase": "Un poste indica el camino",
-    "palabra": "POSTE"
+    "prompt": "a photo of a small village seen in the distance across fields",
+    "frase": "El pueblo aparece al fondo",
+    "palabra": "PUEBLO"
    },
    {
-    "prompt": "a photo of fog in the valley",
-    "frase": "Niebla en el valle",
-    "palabra": "NIEBLA"
+    "prompt": "a photo of a reservoir with a dam in the mountains",
+    "frase": "El embalse",
+    "palabra": "EMBALSE"
+   },
+   {
+    "prompt": "a photo of a rusty abandoned car or farm machine in a field",
+    "frase": "Un coche oxidado entre la hierba",
+    "palabra": "ÓXIDO"
+   },
+   {
+    "prompt": "a photo of a plastic bag caught on a fence flapping in the wind",
+    "frase": "Un plástico ondea en la alambrada",
+    "palabra": "PLÁSTICO"
+   },
+   {
+    "prompt": "a photo of a scarecrow in a field",
+    "frase": "Un espantapájaros",
+    "palabra": "ESPANTAPÁJAROS"
+   },
+   {
+    "prompt": "a photo of initials carved into tree bark",
+    "frase": "Iniciales grabadas en la corteza",
+    "palabra": "INICIALES"
+   },
+   {
+    "prompt": "a photo of a small waterfall in a mountain stream",
+    "frase": "Una cascada",
+    "palabra": "CASCADA"
+   },
+   {
+    "prompt": "a photo of a mountain lake reflecting the peaks",
+    "frase": "El lago refleja el monte",
+    "palabra": "REFLEJO"
+   },
+   {
+    "prompt": "a photo of a fast mountain stream over rocks",
+    "frase": "El ruido del arroyo",
+    "palabra": "ARROYO"
+   },
+   {
+    "prompt": "a photo of the sea appearing beyond the hills",
+    "frase": "Aparece el mar",
+    "palabra": "MAR"
+   },
+   {
+    "prompt": "a photo of waves breaking on the shore at the end of a path",
+    "frase": "Llego al borde del agua",
+    "palabra": "ORILLA"
+   },
+   {
+    "prompt": "a photo of a mountain pass with a sign showing the altitude",
+    "frase": "Llego al puerto",
+    "palabra": "PUERTO"
    }
   ],
   "plantillas_frase": [
-   "{hora} · {suceso}"
+   "TÍTULO DE LA SECUENCIA: {palabra}  (p. ej. NIEBLA)",
+   "LÍNEA DE CAMINATA: UNA CAMINATA DE UN DÍA DE {km_total} KM DESDE {origen} HASTA {final} {comarca} {provincia} {dia} {MES} {año}",
+   "LÍNEA DE CAMINATA CIRCULAR: UNA CAMINATA CIRCULAR EN SENTIDO {HORARIO|ANTIHORARIO} DE {km_total} KM DESDE Y HASTA {origen} PASANDO POR {cima} A {altitud_max} M {provincia} {dia} {MES} {año}",
+   "ORIGEN · {hora} · {lugar}",
+   "{suceso}",
+   "{hora} · {suceso}",
+   "KM {km} · {suceso}",
+   "{altitud} M · {suceso}",
+   "{palabra} / {hora} · KM {km} · {altitud} M",
+   "{suceso} EN {lugar}",
+   "DESPUÉS DE {km} KM {suceso}",
+   "CAMINANDO HACIA EL {NORTE|SUR|ESTE|OESTE} · {suceso}",
+   "SE OYE {sonido} · {hora}   (p. ej. SE OYEN CENCERROS · 11:05)",
+   "{suceso} · {temperatura} °C   (temperatura histórica de esa hora y lugar, opcional, vía Open-Meteo archive)",
+   "FINAL · {hora} · {lugar} · {km_total} KM CAMINADOS"
   ]
  }
 }

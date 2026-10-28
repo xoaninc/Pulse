@@ -14,8 +14,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-import numpy as np
-
 from . import disco, generar, ia, imagenes, indice, rutas
 from .modelo import PRESETS, Modelo, clave_modelo
 from .paseos import Paseos, linea_paseo
@@ -97,9 +95,9 @@ class App:
         f = self.ix.foto(uuid) or indice.foto_cualquiera(uuid)
         if not f:
             return None
-        ruta = f.get("ruta_analisis") or f.get("ruta_original")
-        if lado > 900 and f.get("ruta_original"):
-            ruta = f["ruta_original"]
+        ruta = f.get("ruta_analisis") or f.get("ruta_grande") or f.get("ruta_original")
+        if lado > 900:
+            ruta = f.get("ruta_grande") or f.get("ruta_original") or ruta
         if not ruta:
             return None
         try:

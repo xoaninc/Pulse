@@ -51,8 +51,22 @@ def cmd_analizar(a) -> None:
         it = itertools.islice(it, a.limite)
     r = indice.registrar(it, fuente, borrar_ausentes=not (a.desde or a.hasta or a.album or a.limite))
     print(f"  {r['fotos']} fotos en la fuente")
+    import gc
+
+    gc.collect()  # suelta la base de datos de Fotos antes de cargar el modelo (RAM)
     if r["sin_imagen_local"]:
-        print(f"  {r['sin_imagen_local']} no tienen ninguna imagen en este Mac (solo en iCloud): se saltan.")
+        if getattr(a, "traer_icloud", False):
+            from . import icloud
+
+            uuids = indice.sin_imagen()
+            icloud.traer(uuids, a.max_icloud)
+            for u in uuids:
+                c = icloud.ruta_cache(u)
+                if c.exists():
+                    indice.actualizar_foto(u, ruta_analisis=str(c), ruta_grande=str(c), firma=f"icloud|{c.stat().st_size}")
+        else:
+            print(f"  {r['sin_imagen_local']} no tienen ninguna imagen en este Mac (solo en iCloud): se saltan.")
+            print("  (Si quieres incluirlas: ./arte analizar --traer-icloud  · ~100 KB por foto)")
     disco.comprobar(r["fotos"] * 4096, "guardar el índice")
     modelo = Modelo(a.modelo)
     res = indice.vectorizar(modelo, lote=a.lote)
@@ -131,6 +145,9 @@ def main(argv=None) -> None:
     p.add_argument("--album", help="solo este álbum de Fotos")
     p.add_argument("--limite", type=int, help="(pruebas) analizar solo N fotos")
     p.add_argument("--lote", type=int, default=32)
+    p.add_argument("--traer-icloud", action="store_true",
+                   help="pide a iCloud miniaturas reducidas (~100 KB) de las fotos sin ninguna imagen local")
+    p.add_argument("--max-icloud", type=int, default=None, help="máximo de miniaturas a traer de iCloud")
     p.set_defaults(fn=cmd_analizar)
 
     p = sub.add_parser("galeria", help="abre la galería en el navegador")
@@ -156,6 +173,8 @@ def main(argv=None) -> None:
         p.add_argument(arg)
     p.add_argument("--limite", type=int)
     p.add_argument("--lote", type=int, default=32)
+    p.add_argument("--traer-icloud", action="store_true")
+    p.add_argument("--max-icloud", type=int, default=None)
     p.add_argument("--puerto", type=int, default=8765)
     p.add_argument("--no-abrir", action="store_true")
     p.set_defaults(fn=cmd_todo)

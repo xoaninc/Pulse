@@ -238,11 +238,15 @@ class Paseos:
             q = self._calidad(preferidas)
             ts = np.array([self.ix.fotos[i]["ts"] for i in preferidas])
             cortes = np.linspace(ts.min(), ts.max() + 1, k + 1)
+            palabra = self._palabra_principal(preferidas)
+            usadas: Counter = Counter()
             elegidas = []
             for b in range(k):
                 en = [j for j in range(len(preferidas)) if cortes[b] <= ts[j] < cortes[b + 1]]
                 if en:
-                    elegidas.append(preferidas[max(en, key=lambda j: q[j])])
+                    j = max(en, key=lambda j: q[j] - (1.5 if usadas[palabra[j]] >= 2 else 0))
+                    usadas[palabra[j]] += 1
+                    elegidas.append(preferidas[j])
             # si algún tramo estaba vacío, completar con las mejores restantes
             resto = sorted((j for j in range(len(preferidas)) if preferidas[j] not in elegidas), key=lambda j: -q[j])
             for j in resto:
@@ -257,6 +261,11 @@ class Paseos:
                 elegidas[-1] = preferidas[-1]
             elegidas = sorted(set(elegidas), key=lambda i: self.ix.fotos[i]["ts"])
         return {"paseo": self.publico(p), "todas": self.fichas(p["_idx"]), "sugeridas": [self.ix.uuids[i] for i in elegidas]}
+
+    def _palabra_principal(self, idx: list[int]) -> list[str]:
+        if not self.sucesos or not self.suc_sim.shape[1]:
+            return [""] * len(idx)
+        return [self.sucesos[int(np.argmax(self.suc_sim[i]))]["palabra"] for i in idx]
 
     def fichas(self, idx: list[int]) -> list[dict]:
         kms = self.km_acumulados(idx)
@@ -278,25 +287,20 @@ class Paseos:
                 "natural": round(float(self.natural[i]) * 100, 1),
                 "util": self._es_util(i),
                 "suceso": suc,
-                "frase": frase_borrador(_hora(f), km, alt, suc["frase"] if suc else ""),
+                "frase": suc["frase"] if suc else "",
             })
         return out
 
     def _suceso(self, i: int, usados: Counter) -> dict | None:
+        """El suceso más parecido a la foto, penalizando los ya usados para que la secuencia
+        no repita la misma frase en cada foto."""
         if not self.sucesos or not self.suc_sim.shape[1]:
             return None
         s = self.suc_sim[i]
-        orden = np.argsort(-s)[:6]
-        # preferir un suceso no repetido si está casi igual de cerca
-        mejor = orden[0]
-        for j in orden:
-            if s[j] < s[mejor] - 0.012:
-                break
-            if usados[j] == 0:
-                mejor = j
-                break
-        usados[mejor] += 1
+        orden = np.argsort(-s)[:12]
+        mejor = max(orden, key=lambda j: s[j] - 0.008 * usados[self.sucesos[int(j)]["palabra"]])
         d = self.sucesos[int(mejor)]
+        usados[d["palabra"]] += 1
         return {"frase": d["frase"], "palabra": d["palabra"], "confianza": round(float(s[mejor]) * 100, 1)}
 
     def completar_altitudes(self, uuids: list[str]) -> None:
@@ -349,5 +353,5 @@ def linea_paseo(fichas: list[dict], inicio: str | None) -> str:
         donde = f" CIRCULAR EN {l0}"
     else:
         donde = ""
-    pre = "CAMINATA DE " if dur != "UN PASEO" else ""
+    pre = "UNA CAMINATA DE " if dur != "UN PASEO" else ""
     return f"{pre}{dur}{donde}{km} · {fecha_larga(inicio)}".upper().strip(" ·")

@@ -63,6 +63,7 @@ def cargar_textos(modelo_clave: str, obtener_modelo, cfg: dict | None = None) ->
     modelo = obtener_modelo()
     nombres = list(grupos)
     todas = [f for n in nombres for f in grupos[n]]
+    print(f"· Preparando {len(todas)} frases de las categorías (solo la primera vez)…")
     vec = modelo.vectores_texto(todas)
     out, i = {}, 0
     for n in nombres:

@@ -18,6 +18,10 @@ Todo funciona **en tu Mac, sin internet** (salvo la primera descarga del modelo)
 2. Activa **Terminal** (o pulsa **+** y añádela desde *Aplicaciones → Utilidades*).
 3. Cierra la Terminal por completo (⌘Q) y vuelve a abrirla.
 
+**Usa la app Terminal de macOS** (no iTerm ni la terminal de VS Code). Los permisos de Fotos se conceden a la app de terminal.
+
+**Cierra la app Fotos** antes de analizar. Si está abierta, la base de datos está bloqueada y hay que copiarla a una carpeta temporal (cientos de MB). La app lo comprueba antes de empezar.
+
 **Espacio:** la app ocupa unos **2 GB** (Python y librerías ~1,3 GB + modelo ~0,4 GB) y no descarga tus fotos de iCloud para analizarlas. El instalador no sigue si quedan menos de 5 GB libres.
 
 ## 2 · Instalar
@@ -44,7 +48,7 @@ Todo se instala **dentro de la carpeta** (`.venv/`, `.python/`). Para desinstala
 ```
 
 - Lee la fototeca de **Fotos** con [osxphotos](https://github.com/RhetTbull/osxphotos), sin tocarla: solo lee.
-- **iCloud y «Optimizar almacenamiento»:** analiza las **previsualizaciones** que Fotos ya guarda en el Mac, así que **no descarga nada**. Las fotos sin previsualización local se saltan y te dice cuántas son.
+- **iCloud y «Optimizar almacenamiento»:** analiza las **previsualizaciones** que Fotos guarda en el Mac aunque el original esté en la nube (~1.024 px, con su GPS), así que **no descarga nada**. Si alguna foto no tiene ninguna imagen local, te dice cuántas son. Para incluirlas: `./arte analizar --traer-icloud`. Pide a iCloud una versión reducida (~100 KB por foto, no el original) y necesita el permiso de *Fotos* para la Terminal (*Ajustes → Privacidad y seguridad → Fotos → Terminal → Acceso completo*).
 - La primera vez descarga el modelo de visión (~400 MB). Luego va todo sin internet.
 - Es **incremental**: si lo cortas con Ctrl+C no pierdes lo hecho, y la próxima vez solo procesa las fotos nuevas.
 
@@ -81,7 +85,7 @@ Se abre el navegador (`http://127.0.0.1:8765`, que solo funciona en tu Mac). Tie
 
 **3 · Láminas**
 - Escribe tu nombre, elige el orden y el contraste del B/N y pulsa **Generar PDF y JPG**.
-- Si alguna foto elegida está solo en iCloud, se descarga **solo esa** (la app Fotos puede abrirse sola). Si no se puede, usa la previsualización y te avisa de que quizá salga blanda impresa.
+- Si alguna foto elegida está solo en iCloud, se descarga **solo esa** a resolución completa. La primera vez macOS te pedirá permiso para que la Terminal acceda a Fotos: elige *Acceso completo*. Fotos guarda esos originales dentro de la fototeca (36 fotos ≈ 100-300 MB) hasta que iCloud vuelva a optimizar. Si no se puede descargar, usa la previsualización y te avisa de que quizá salga blanda impresa.
 
 Resultado, en la carpeta `salida/`:
 
@@ -139,7 +143,9 @@ Solo se envían **miniaturas de 512 px** de las fotos que pidas revisar. Una pas
 
 ## Problemas frecuentes
 
-- **«macOS no deja leer la fototeca»** → falta el *Acceso total al disco* para la Terminal (paso 1). Después hay que reiniciar la Terminal.
+- **«macOS no deja leer la fototeca»** → falta el *Acceso total al disco* para la Terminal (paso 1). Después hay que cerrar la Terminal con ⌘Q y volver a abrirla.
+- **«No hay espacio suficiente para leer la base de datos de Fotos»** → cierra la app Fotos y vuelve a intentarlo.
+- **No se descargan las fotos de iCloud** → *Ajustes → Privacidad y seguridad → Fotos → Terminal → Acceso completo* (con «acceso limitado» no ve las fotos).
 - **«N fotos no tienen ninguna imagen en este Mac»** → son fotos solo en iCloud sin previsualización. Abre la app Fotos y deja que termine de sincronizar, o analiza solo lo que tengas.
 - **Una foto elegida sale blanda** → no se pudo bajar el original de iCloud. Abre la foto en la app Fotos (se descarga), cierra la galería y vuelve a generar.
 - **Falta una categoría** → mira *Qué buscar* en esa categoría: hay ideas para hacer la foto mañana mismo (una bolsa en una valla, palés apilados, una mancha de óxido, unas gaviotas alineadas…).

@@ -182,14 +182,14 @@ def test_sugerencia_12_con_origen_y_final():
     assert r["sugeridas"][0] == "u0" and r["sugeridas"][-1] == "u39"
     fichas = {f["uuid"]: f for f in r["todas"]}
     assert fichas["u0"]["km"] == 0
-    assert "km" in fichas["u10"]["frase"]
+    assert fichas["u10"]["frase"] in ("Pasan nubes", "Un perro")
 
 
 def test_textos_fulton():
     assert frase_borrador("10:05", 3.25, 1150, "Pasan nubes") == "10:05 · km 3,2 · 1.150 m — Pasan nubes"
     f = [{"lugar": "Cercedilla", "fecha": "2025-05-11T10:00:00+02:00", "km": 0},
          {"lugar": "Siete Picos", "fecha": "2025-05-11T14:10:00+02:00", "km": 9.4}]
-    assert linea_paseo(f, f[0]["fecha"]) == "CAMINATA DE 4 HORAS DESDE CERCEDILLA HASTA SIETE PICOS · 9,4 KM · 11 MAYO 2025"
+    assert linea_paseo(f, f[0]["fecha"]) == "UNA CAMINATA DE 4 HORAS DESDE CERCEDILLA HASTA SIETE PICOS · 9,4 KM · 11 MAYO 2025"
     assert km_entre((40.0, -3.0), (40.0, -3.0)) == 0
 
 

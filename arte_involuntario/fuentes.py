@@ -26,6 +26,7 @@ class Foto:
     nombre: str = ""
     ruta_analisis: str | None = None  # imagen local que se analiza (previsualización u original)
     ruta_original: str | None = None  # original/editada si está en el disco
+    ruta_grande: str | None = None    # la mayor previsualización local (editor de recorte)
     fecha: str | None = None          # ISO 8601 con zona horaria si se conoce
     ts: float | None = None           # segundos desde 1970 (UTC)
     lat: float | None = None
@@ -75,22 +76,18 @@ def _lugar(p) -> tuple[str, str]:
     place = _seguro(p, "place")
     if not place:
         return "", ""
-    largo = ""
+    largo = _seguro(place, "name", "") or _seguro(place, "address_str", "") or ""
     corto = ""
     try:
-        largo = place.address_str or place.name or ""
-    except Exception:
-        largo = _seguro(place, "name", "") or ""
-    try:
         n = place.names
-        ciudad = (n.city or n.sub_locality or n.area_of_interest or n.additional_city or [None])
-        ciudad = ciudad[0] if isinstance(ciudad, (list, tuple)) and ciudad else ciudad
-        interes = n.area_of_interest[0] if getattr(n, "area_of_interest", None) else None
-        pais = n.country[0] if getattr(n, "country", None) else None
-        partes = [x for x in (interes, ciudad if ciudad != interes else None, pais) if x]
+        primero = lambda campo: (getattr(n, campo, None) or [None])[0]  # noqa: E731 (listas de menor a mayor área)
+        interes = primero("area_of_interest") or primero("inland_water") or primero("body_of_water")
+        ciudad = primero("city") or primero("sub_administrative_area") or primero("region")
+        pais = primero("country")
+        partes = [x for x in (interes, ciudad, pais) if x]
         corto = ", ".join(dict.fromkeys(partes))
     except Exception:
-        corto = (_seguro(place, "name", "") or "").split(",")[0]
+        pass
     return largo, corto or largo.split(",")[0]
 
 
@@ -108,19 +105,39 @@ def _caras(p) -> tuple[int, float]:
     return len(caras), tam
 
 
-def _previsualizacion(p) -> str | None:
-    """La mayor previsualización local de imagen (Fotos las ordena de mayor a menor)."""
+# Tamaño aproximado (lado largo, px) de cada tipo de previsualización que guarda Fotos.
+# _1_105_c ≈ 1024 px: siempre está en el Mac aunque el original esté en iCloud y conserva el GPS.
+SUFIJOS_PX = {"_4_5005_c": 500, "_1_105_c": 1100, "_1_102_o": 2048, "_1_102_a": 2048, "_1_100_o": 4000}
+
+
+def _px_por_nombre(ruta: str) -> int:
+    nombre = os.path.basename(ruta)
+    for suf, px in SUFIJOS_PX.items():
+        if suf in nombre:
+            return px
+    return 0
+
+
+def _previsualizaciones(p) -> tuple[str | None, str | None]:
+    """(para_analizar, la_mayor): la más pequeña con ≥ 512 px (rápida de leer) y la más grande
+    (para el editor de recorte y como último recurso en las láminas). Nunca descarga nada."""
     try:
-        derivadas = p.path_derivatives or []
+        derivadas = [d for d in (p.path_derivatives or []) if d.lower().endswith(EXT_IMAGEN) and os.path.exists(d)]
     except Exception:
         derivadas = []
+    if not derivadas:
+        return None, None
+    con_px = []
     for d in derivadas:
-        if d.lower().endswith(EXT_IMAGEN) and os.path.exists(d):
-            return d
-    return None
+        px = _px_por_nombre(d) or max(imagenes.tam_imagen(d))
+        con_px.append((px, d))
+    buenas = sorted(c for c in con_px if c[0] >= 512)
+    analizar = buenas[0][1] if buenas else max(con_px)[1]
+    return analizar, max(con_px)[1]
 
 
-def foto_de_photoinfo(p) -> Foto:
+def foto_de_photoinfo(p, extra: dict | None = None) -> Foto:
+    extra = extra or {}
     orig = None
     try:
         if p.hasadjustments and p.path_edited and os.path.exists(p.path_edited):
@@ -129,14 +146,26 @@ def foto_de_photoinfo(p) -> Foto:
             orig = p.path
     except Exception:
         orig = None
-    previa = _previsualizacion(p)
-    # Para analizar, una previsualización (~1-2k px) es más rápida que un original de 12-48 MP.
+    previa, grande = _previsualizaciones(p)
+    if not previa and not orig:
+        # ¿la trajimos antes de iCloud con --traer-icloud?
+        from .rutas import MINIATURAS_ICLOUD
+
+        cache = MINIATURAS_ICLOUD / f"{p.uuid}.jpg"
+        if cache.exists():
+            previa = grande = str(cache)
+    # Si la foto está editada, su previsualización ya refleja la edición; para analizar,
+    # una previsualización (~1.000 px) es mucho más rápida que un original de 12-48 MP.
     analisis = previa or orig
-    fecha, ts = _fecha(_seguro(p, "date"))
+    dt = _seguro(p, "date")
+    if dt is not None and dt.year <= 1970:
+        dt = None  # Fotos pone 1970 cuando no hay fecha
+    fecha, ts = _fecha(dt)
     lat, lon = None, None
     loc = _seguro(p, "location", (None, None))
     if loc and loc[0] is not None and loc[1] is not None and not (loc[0] == 0 and loc[1] == 0):
         lat, lon = float(loc[0]), float(loc[1])
+    alt = extra.get("alt")
     largo, corto = _lugar(p)
     etiquetas = []
     try:
@@ -146,7 +175,8 @@ def foto_de_photoinfo(p) -> Foto:
     estetica = None
     try:
         sc = p.score
-        estetica = float(sc.overall) if sc and sc.overall is not None else None
+        if sc and sc.overall:  # 0.0 = Fotos aún no la ha analizado
+            estetica = float(sc.overall)
     except Exception:
         pass
     n_caras, cara_max = _caras(p)
@@ -166,10 +196,12 @@ def foto_de_photoinfo(p) -> Foto:
         nombre=_seguro(p, "original_filename", "") or "",
         ruta_analisis=analisis,
         ruta_original=orig,
+        ruta_grande=grande,
         fecha=fecha,
         ts=ts,
         lat=lat,
         lon=lon,
+        alt=alt,
         lugar=largo,
         lugar_corto=corto,
         etiquetas=etiquetas,
@@ -187,6 +219,63 @@ def foto_de_photoinfo(p) -> Foto:
     )
 
 
+def ruta_fototeca(biblioteca: str | None = None) -> Path | None:
+    if biblioteca:
+        return Path(biblioteca).expanduser()
+    try:
+        from osxphotos.utils import get_system_library_path
+
+        r = get_system_library_path()
+        if r:
+            return Path(r)
+    except Exception:
+        pass
+    defecto = Path.home() / "Pictures" / "Photos Library.photoslibrary"
+    return defecto if defecto.exists() else None
+
+
+def comprobar_espacio_fototeca(biblioteca: str | None = None) -> None:
+    """Si la app Fotos está abierta, osxphotos copia la base de datos a una carpeta temporal
+    (cientos de MB o más): comprobamos que cabe antes de empezar."""
+    from . import disco
+
+    lib = ruta_fototeca(biblioteca)
+    if not lib:
+        return
+    tam = 0
+    for f in ("database/Photos.sqlite", "database/Photos.sqlite-wal", "database/search/psi.sqlite"):
+        try:
+            tam += (lib / f).stat().st_size
+        except OSError:
+            pass
+    if tam:
+        import tempfile
+
+        disco.comprobar(int(tam * 1.2), "leer la base de datos de Fotos", Path(tempfile.gettempdir()))
+
+
+def _altitudes(db) -> dict[str, dict]:
+    """Altitud de cada foto: Fotos la guarda en ZASSET.ZLOCATIONDATA (8 doubles: lat, lon, alt…),
+    pero osxphotos no la expone. Si algo falla, sin altitud (no es imprescindible)."""
+    import struct
+
+    tabla = "ZGENERICASSET" if getattr(db, "photos_version", 0) == 5 else "ZASSET"
+    out: dict[str, dict] = {}
+    try:
+        filas = db.execute(f"SELECT ZUUID, ZLOCATIONDATA FROM {tabla} WHERE ZLOCATIONDATA IS NOT NULL").fetchall()
+    except Exception:
+        return out
+    for uuid, blob in filas:
+        try:
+            if blob and len(blob) >= 24:
+                lat, lon, alt = struct.unpack_from("<3d", blob)
+                if alt and abs(alt) < 9000:
+                    out[uuid] = {"alt": float(alt)}
+        except Exception:
+            continue
+    return out
+
+
 def abrir_fototeca(biblioteca: str | None = None):
     try:
         import osxphotos
@@ -200,7 +289,7 @@ def abrir_fototeca(biblioteca: str | None = None):
             raise RuntimeError(
                 "macOS no deja leer la fototeca. Ve a Ajustes del Sistema → Privacidad y seguridad → "
                 "Acceso total al disco y activa «Terminal» (o la app de terminal que uses). "
-                "Después cierra y vuelve a abrir la Terminal."
+                "Después cierra la Terminal con ⌘Q y vuelve a abrirla."
             ) from e
         raise
 
@@ -211,7 +300,9 @@ def desde_fototeca(
     hasta: datetime | None = None,
     album: str | None = None,
 ) -> Iterator[Foto]:
+    comprobar_espacio_fototeca(biblioteca)
     db = abrir_fototeca(biblioteca)
+    extras = _altitudes(db)
     kwargs: dict = {"images": True, "movies": False}
     if desde:
         kwargs["from_date"] = desde
@@ -221,14 +312,19 @@ def desde_fototeca(
         kwargs["albums"] = [album]
     for p in db.photos(**kwargs):
         try:
-            if _seguro(p, "intrash", False) or _seguro(p, "hidden", False):
+            if _seguro(p, "intrash", False) or _seguro(p, "hidden", False) or _seguro(p, "ismovie", False):
                 continue
-            if _seguro(p, "ismovie", False):
+            # álbumes compartidos y «Compartido contigo» no son fotos tuyas
+            if _seguro(p, "shared", False):
                 continue
-            # De las ráfagas, solo la elegida (o la primera)
-            if _seguro(p, "burst", False) and not (_seguro(p, "burst_selected", False) or _seguro(p, "burst_key", False)):
+            if _seguro(p, "syndicated", False) and not _seguro(p, "saved_to_library", False):
                 continue
-            yield foto_de_photoinfo(p)
+            # de las ráfagas, solo la elegida (o la que Fotos propone)
+            if _seguro(p, "burst", False) and not (
+                _seguro(p, "burst_selected", False) or _seguro(p, "burst_key", False) or _seguro(p, "burst_default_pick", False)
+            ):
+                continue
+            yield foto_de_photoinfo(p, extras.get(p.uuid))
         except Exception as e:  # una foto rara no debe parar el análisis
             print(f"  ! Saltando {getattr(p, 'uuid', '?')}: {e}")
 

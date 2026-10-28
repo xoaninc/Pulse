@@ -105,12 +105,14 @@ def generar(sel: dict | None = None, descargar: bool = True, aviso=print) -> dic
                 continue
             im.save(salida / "fotos_paseo" / f"{k:02d}.jpg", quality=92, dpi=(300, 300))
             m = metas.get(it["uuid"], {})
-            fotos.append({"im": im, "frase": it.get("frase", ""), "km": it.get("km"), "alt": it.get("alt", m.get("alt")),
-                          "lat": m.get("lat"), "lon": m.get("lon")})
+            alt = it.get("alt") if it.get("alt") is not None else m.get("alt")
+            fotos.append({"im": im, "frase": it.get("frase", ""), "km": it.get("km"), "alt": alt,
+                          "fecha": m.get("fecha"), "lat": m.get("lat"), "lon": m.get("lon")})
         lam_paseo = laminas.maquetar_paseo(
             fotos, fu, paseo.get("titulo", ""), paseo.get("linea", ""), autor,
             mayusculas=paseo.get("mayusculas", True), dibujo=paseo.get("dibujo", True),
             cabecera=op.get("cabecera", True), diseno=paseo.get("diseno", "rejilla"),
+            datos=paseo.get("datos", True),
         )
 
     ficheros = {}

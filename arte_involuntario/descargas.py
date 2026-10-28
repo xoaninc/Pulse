@@ -64,8 +64,12 @@ def resolver(fotos: list[dict], descargar: bool = True, aviso=print) -> dict[str
         for u, r in nuevos.items():
             out[u] = {"ruta": r, "origen": "icloud"}
     for f in fotos:
-        if f["uuid"] not in out and _es_imagen_valida(f.get("ruta_analisis")):
-            out[f["uuid"]] = {"ruta": f["ruta_analisis"], "origen": "previa"}
+        if f["uuid"] in out:
+            continue
+        for clave in ("ruta_grande", "ruta_analisis"):
+            if _es_imagen_valida(f.get(clave)):
+                out[f["uuid"]] = {"ruta": f[clave], "origen": "previa"}
+                break
     from .imagenes import tam_imagen
 
     for u, d in out.items():
@@ -93,6 +97,7 @@ def _descargar_icloud(fotos: list[dict], aviso) -> dict[str, str]:
         destino = rutas.ORIGINALES / f["uuid"]
         destino.mkdir(parents=True, exist_ok=True)
         ruta = None
+        ultimo_error = None
         for opciones in (
             dict(download_missing=True, use_photokit=True, edited=bool(p.hasadjustments)),
             dict(download_missing=True, use_photos_export=True, edited=bool(p.hasadjustments)),
@@ -111,6 +116,7 @@ def _descargar_icloud(fotos: list[dict], aviso) -> dict[str, str]:
             aviso(f"  {k}/{len(fotos)} ✓ {Path(ruta).name}")
         else:
             shutil.rmtree(destino, ignore_errors=True)
-            aviso(f"  {k}/{len(fotos)} ✗ no se pudo descargar {f.get('nombre') or f['uuid']}"
+            motivo = f": {ultimo_error}" if ultimo_error else ""
+            aviso(f"  {k}/{len(fotos)} ✗ no se pudo descargar {f.get('nombre') or f['uuid']}{motivo}"
                   " (se usará la previsualización)")
     return resultado

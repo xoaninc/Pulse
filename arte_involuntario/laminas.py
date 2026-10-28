@@ -281,7 +281,9 @@ def _dibujo_recorrido(L: Lamina, puntos: list[dict], x: float, y: float, w: floa
     if len(con_alt) >= max(4, len(puntos) * 0.6):
         xs = [p["km"] for p in con_alt]
         ys = [p["alt"] for p in con_alt]
-        etiqueta = f"PERFIL · {round(min(ys))}–{round(max(ys))} M"
+        from .paseos import num_es
+
+        etiqueta = f"PERFIL · {num_es(min(ys), 0)}–{num_es(max(ys), 0)} M"
     elif len(con_gps) >= 3:
         lat0 = sum(p["lat"] for p in con_gps) / len(con_gps)
         xs = [p["lon"] * math.cos(math.radians(lat0)) for p in con_gps]
@@ -314,8 +316,10 @@ def _dibujo_recorrido(L: Lamina, puntos: list[dict], x: float, y: float, w: floa
 
 def maquetar_paseo(fotos: list[dict], fu: Fuentes, titulo: str, linea: str, autor: str = "",
                    mayusculas: bool = True, dibujo: bool = True, cabecera: bool = True,
-                   diseno: str = "rejilla") -> list[Lamina]:
-    """`fotos`: dicts con im (ya en B/N), frase, y opcionalmente km/alt/lat/lon. Siempre 2 láminas."""
+                   diseno: str = "rejilla", datos: bool = True) -> list[Lamina]:
+    """`fotos`: dicts con im (ya en B/N), frase y opcionalmente fecha/km/alt/lat/lon. Siempre 2 láminas.
+    Como en las obras de Fulton: PALABRA-TÍTULO y línea de la caminata centradas arriba; bajo cada
+    foto, una línea de datos (ORIGEN/nº · hora · km · altitud) y la frase del suceso."""
     W, H = A3
     n = len(fotos)
     corte = math.ceil(n / 2)
@@ -324,42 +328,41 @@ def maquetar_paseo(fotos: list[dict], fu: Fuentes, titulo: str, linea: str, auto
     laminas = []
     for p, grupo in enumerate(grupos):
         L = Lamina()
-        top = 20.0
-        if p == 0:
-            tit = (titulo or "").strip().upper()
+        top = 16.0
+        tit = (titulo or "").strip().upper() if p == 0 else ""
+        if tit:
             pt_tit = 40
-            while tit and fu.ancho(tit, "negrita", pt_tit, 0.04) > W - 2 * margen - 70 and pt_tit > 18:
+            while fu.ancho(tit, "negrita", pt_tit, 0.1) > W - 2 * margen and pt_tit > 18:
                 pt_tit -= 2
-            if tit:
-                L.elementos.append(Texto(margen, top + pt_tit * PT * 0.8, tit, "negrita", pt_tit, tracking=0.04))
-            y_linea = top + (pt_tit * PT * 0.8 + 7 if tit else 4)
+            L.elementos.append(Texto(W / 2, top + pt_tit * PT * 0.78, tit, "negrita", pt_tit, "centro", tracking=0.1))
+            y_linea = top + pt_tit * PT * 0.78 + 7.5
         else:
             y_linea = top + 4
+        y_fin_cab = y_linea
         if linea:
-            lns, ptl = texto_en_caja(linea.upper(), fu, "normal", 9, W - 2 * margen - 80, 2, 7, tracking=0.08)
+            lns, ptl = texto_en_caja(linea.upper(), fu, "normal", 9, W - 2 * margen - 40, 2, 7, tracking=0.08)
             for j, ln in enumerate(lns):
-                L.elementos.append(Texto(margen, y_linea + j * ptl * PT * 1.35, ln, "normal", ptl, tracking=0.08))
-            y_fin_cab = y_linea + len(lns) * ptl * PT * 1.35
-        else:
-            y_fin_cab = y_linea
+                L.elementos.append(Texto(W / 2, y_linea + j * ptl * PT * 1.4, ln, "normal", ptl, "centro", tracking=0.08))
+            y_fin_cab = y_linea + (len(lns) - 1) * ptl * PT * 1.4 + 2
         if cabecera:
+            L.elementos.append(Texto(margen, H - 9, "PASEO FOTOGRÁFICO · según las pautas de Hamish Fulton", "normal", 7, gris=0.4, tracking=0.04))
             der = f"{autor.upper()}  ·  " if autor else ""
-            L.elementos.append(Texto(W - margen, top + 3, f"{der}PASEO FOTOGRÁFICO · {p + 1}/2", "normal", 8, "der", tracking=0.08))
-            L.elementos.append(Texto(W - margen, top + 7.5, "según las pautas de Hamish Fulton", "cursiva", 7.5, "der", gris=0.35))
-        zona_y = max(y_fin_cab + 8, 50.0)
+            L.elementos.append(Texto(W - margen, H - 9, f"{der}{p + 1}/2", "normal", 7, "der", gris=0.4, tracking=0.08))
+        zona_y = y_fin_cab + 9
         if p == 1 and dibujo:
             # franja propia bajo la cabecera, a lo ancho, como los murales de Fulton
-            if _dibujo_recorrido(L, fotos, margen, y_fin_cab + 6, W - 2 * margen, 22, fu):
-                zona_y = y_fin_cab + 6 + 22 + 10
-        cap = 15.0
+            if _dibujo_recorrido(L, fotos, margen, y_fin_cab + 7, W - 2 * margen, 20, fu):
+                zona_y = y_fin_cab + 7 + 20 + 9
+        cap = 18.0
         gap = 7.0
-        alto = H - zona_y - 14
+        alto = H - zona_y - 15
         ancho = W - 2 * margen
         if not grupo:
             laminas.append(L)
             continue
+        opciones = dict(mayusculas=mayusculas, datos=datos)
         if diseno == "crece" and len(grupo) >= 3:
-            _maquetar_crece(L, grupo, p, corte, fu, margen, zona_y, ancho, alto, cap, mayusculas)
+            _maquetar_crece(L, grupo, p, corte, n, fu, margen, zona_y, ancho, alto, cap, opciones)
         else:
             filas, cols, s = _rejilla(len(grupo), ancho, alto, cap, gap)
             usado_w = cols * s + (cols - 1) * gap
@@ -370,28 +373,56 @@ def maquetar_paseo(fotos: list[dict], fu: Fuentes, titulo: str, linea: str, auto
                 fila, col = divmod(k, cols)
                 x = x0 + col * (s + gap)
                 y = y0 + fila * (s + cap + gap)
-                _foto_paseo(L, f, x, y, s, p * corte + k, n, fu, mayusculas)
+                _foto_paseo(L, f, x, y, s, p * corte + k, n, fu, **opciones)
         laminas.append(L)
     return laminas
 
 
-def _foto_paseo(L, f, x, y, s, num, n, fu, mayusculas):
+def datos_foto(f: dict) -> str:
+    from datetime import datetime
+
+    from .paseos import num_es
+
+    partes = []
+    try:
+        partes.append(datetime.fromisoformat(f["fecha"]).strftime("%H:%M"))
+    except Exception:
+        pass
+    if f.get("km") is not None:
+        partes.append(f"KM {num_es(float(f['km']))}")
+    if f.get("alt") is not None:
+        partes.append(f"{num_es(float(f['alt']), 0)} M")
+    return " · ".join(partes)
+
+
+def _foto_paseo(L, f, x, y, s, num, n, fu, mayusculas=True, datos=True):
     L.elementos.append(Foto(x, y, s, f["im"]))
-    marca = "ORIGEN" if num == 0 else ("FINAL" if num == n - 1 else f"{num + 1:02d}")
-    L.elementos.append(Texto(x, y + s + 4.2, marca, "negrita", 7.5, tracking=0.12))
+    y1 = y + s + 4.4
+    pt_m = 7.0
+    if num == 0 or num == n - 1:
+        L.elementos.append(Punto(x + 1.0, y1 - 0.95, 0.95, relleno=(num == 0)))
+        marca, xm = ("ORIGEN" if num == 0 else "FINAL"), x + 2.9
+    else:
+        marca, xm = f"{num + 1:02d}", x
+    L.elementos.append(Texto(xm, y1, marca, "negrita", pt_m, tracking=0.12))
+    if datos:
+        d = datos_foto(f)
+        if d:
+            xd = xm + fu.ancho(marca, "negrita", pt_m, 0.12) + 2.2
+            L.elementos.append(Texto(xd, y1, "·  " + d, "normal", 6.5, gris=0.45, tracking=0.06))
     frase = (f.get("frase") or "").strip()
     if mayusculas:
         frase = frase.upper()
     if frase:
-        lineas, pt = texto_en_caja(frase, fu, "normal", 7.5, s, 3, 5.5, tracking=0.03 if mayusculas else 0)
+        tr = 0.04 if mayusculas else 0
+        lineas, pt = texto_en_caja(frase, fu, "normal", 7.5, s, 3, 5.5, tracking=tr)
         for j, ln in enumerate(lineas):
-            L.elementos.append(Texto(x, y + s + 8.0 + j * pt * PT * 1.3, ln, "normal", pt, tracking=0.03 if mayusculas else 0))
+            L.elementos.append(Texto(x, y + s + 8.6 + j * pt * PT * 1.32, ln, "normal", pt, tracking=tr))
 
 
-def _maquetar_crece(L, grupo, p, corte, fu, margen, zona_y, ancho, alto, cap, mayusculas):
+def _maquetar_crece(L, grupo, p, corte, n_total, fu, margen, zona_y, ancho, alto, cap, opciones):
     """Variante «Within Sight» (Helen Sear): las fotos crecen a lo largo del recorrido, alineadas abajo."""
     m = len(grupo)
-    n_total = corte * 2
     gap = 5.0
     pesos = [1 + 0.9 * ((p * corte + k) / max(1, n_total - 1)) for k in range(m)]
     # dos filas si son muchas
@@ -409,7 +440,7 @@ def _maquetar_crece(L, grupo, p, corte, fu, margen, zona_y, ancho, alto, cap, ma
         base = zona_y + fi * (alto_fila + 8) + alto_fila - cap
         for k in trozo:
             s = pesos[k] * esc
-            _foto_paseo(L, grupo[k], x, base - s, s, p * corte + k, n_total, fu, mayusculas)
+            _foto_paseo(L, grupo[k], x, base - s, s, p * corte + k, n_total, fu, **opciones)
             x += s + gap
 
 

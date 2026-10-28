@@ -197,6 +197,15 @@ def foto_cualquiera(uuid: str) -> dict | None:
     return json.loads(r[0]) if r else None
 
 
+def sin_imagen() -> list[str]:
+    con = conectar()
+    filas = con.execute(
+        "SELECT uuid FROM fotos WHERE fuente='fotos' AND json_extract(datos,'$.ruta_analisis') IS NULL ORDER BY ts DESC"
+    ).fetchall()
+    con.close()
+    return [f[0] for f in filas]
+
+
 def actualizar_foto(uuid: str, **cambios) -> None:
     con = conectar()
     r = con.execute("SELECT datos FROM fotos WHERE uuid=?", (uuid,)).fetchone()
