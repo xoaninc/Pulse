@@ -15,7 +15,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import disco, generar, ia, imagenes, indice, rutas
-from .modelo import PRESETS, Modelo, clave_modelo
+from .modelo import Modelo, clave_modelo, resolver_preset
 from .paseos import Paseos, linea_paseo
 from .puntuar import Puntuador
 from .textos import cargar_textos
@@ -116,7 +116,7 @@ class App:
         return {
             "fotos": len(self.ix),
             "estadisticas": indice.estadisticas(),
-            "modelo": {"preset": self.preset, "nombre": PRESETS[self.preset].arquitectura},
+            "modelo": {"preset": self.preset, "nombre": resolver_preset(self.preset).arquitectura},
             "categorias": [
                 {"id": c["id"], "nombre": c["nombre"], "definicion": c.get("definicion", ""),
                  "descripcion": c.get("descripcion_corta", ""), "consejos": c.get("consejos", []),

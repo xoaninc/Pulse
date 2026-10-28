@@ -29,10 +29,10 @@ def _fecha(s: str | None):
 
 def cmd_analizar(a) -> None:
     from . import fuentes, indice
-    from .modelo import PRESETS, Modelo
+    from .modelo import Modelo, resolver_preset
 
     rutas.preparar()
-    preset = PRESETS[a.modelo]
+    preset = resolver_preset(a.modelo)
     if not any(rutas.MODELOS.rglob("*.safetensors")) and not any(rutas.MODELOS.rglob("*.bin")):
         disco.comprobar(int(preset.descarga_mb * 1.3 * 1024**2), f"descargar el modelo ({preset.descarga_mb} MB)")
     print(f"Espacio libre: {rutas.legible(disco.libre())}")
@@ -133,8 +133,8 @@ def main(argv=None) -> None:
     sub = ap.add_subparsers(dest="cmd")
 
     def comunes(p):
-        p.add_argument("--modelo", choices=["rapido", "preciso"], default="rapido",
-                       help="rapido (por defecto) o preciso (más lento, descarga 1,7 GB)")
+        p.add_argument("--modelo", default="rapido",
+                       help="rapido (por defecto), preciso (más lento, más descarga) o arquitectura:pesos de open_clip")
 
     p = sub.add_parser("analizar", help="analiza la fototeca")
     comunes(p)

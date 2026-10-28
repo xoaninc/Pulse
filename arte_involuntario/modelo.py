@@ -33,8 +33,18 @@ PRESETS: dict[str, Preset] = {
 PRESET_POR_DEFECTO = "rapido"
 
 
+def resolver_preset(preset: str) -> Preset:
+    """«rapido», «preciso» o cualquier modelo de open_clip como «arquitectura:pesos»."""
+    if preset in PRESETS:
+        return PRESETS[preset]
+    if ":" in preset:
+        arq, pre = preset.split(":", 1)
+        return Preset(preset, arq, pre, 1000, f"{arq} ({pre})")
+    raise ValueError(f"Modelo desconocido «{preset}». Opciones: {', '.join(PRESETS)} o arquitectura:pesos")
+
+
 def clave_modelo(preset: str) -> str:
-    p = PRESETS[preset]
+    p = resolver_preset(preset)
     return f"{p.arquitectura}:{p.pretrained}"
 
 
@@ -57,9 +67,7 @@ class Modelo:
         import torch
         import open_clip
 
-        if preset not in PRESETS:
-            raise ValueError(f"Modelo desconocido «{preset}». Opciones: {', '.join(PRESETS)}")
-        self.preset = PRESETS[preset]
+        self.preset = resolver_preset(preset)
         self.clave = clave_modelo(preset)
         self.dispositivo = dispositivo or elegir_dispositivo()
         t0 = time.time()
