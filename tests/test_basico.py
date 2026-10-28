@@ -25,8 +25,11 @@ def test_recorte_cuadrado_y_bn():
     c2 = imagenes.recorte_cuadrado(im, 0.5, 0.5, 2)
     assert c2.size == (100, 100)
     bn = imagenes.a_blanco_y_negro(c, "alto")
-    r, g, b = bn.getpixel((10, 10))
-    assert r == g == b
+    assert bn.mode == "L"  # gris de verdad: el PDF la incrusta como DeviceGray
+    # la niebla (tonos claros y poco contraste) no se estira hasta el blanco y negro puros
+    niebla = Image.linear_gradient("L").resize((200, 200)).point(lambda v: 150 + v * 70 // 255).convert("RGB")
+    lo, hi = imagenes.a_blanco_y_negro(niebla, "normal").getextrema()
+    assert lo > 60 and hi < 250
 
 
 def _rat(x):
@@ -169,7 +172,21 @@ def test_detecta_caminata_y_tolera_intrusa():
     assert len(ps) == 1
     p = ps[0]
     assert p["fotos"] == 39          # 40 menos la intrusa
-    assert p["km"] > 3
+    assert 3 < p["km"] < 6
+    assert p["id"] == f"p{int(pa.ix.fotos[0]['ts'])}"  # id estable: instante de la primera foto
+
+
+def test_pico_gps_no_infla_km_y_rango_reabrible():
+    pa = _paseo_sintetico()
+    base = pa.detectar(min_fotos=8)[0]["km"]
+    pa2 = _paseo_sintetico()
+    pa2.ix.fotos[15]["lat"] += 0.03   # una posición desviada ~3 km que va y vuelve
+    pa2._paseos = None
+    assert abs(pa2.detectar(min_fotos=8)[0]["km"] - base) < 0.2
+    t0 = pa2.ix.fotos[0]["ts"]
+    r = pa2.por_rango(t0, t0 + 3600)
+    pa3 = _paseo_sintetico()       # «reinicio del servidor»: el rango se reconstruye por su id
+    assert pa3.por_id(r["id"])["fotos"] == r["fotos"]
 
 
 def test_sugerencia_12_con_origen_y_final():
@@ -190,6 +207,10 @@ def test_textos_fulton():
     f = [{"lugar": "Cercedilla", "fecha": "2025-05-11T10:00:00+02:00", "km": 0},
          {"lugar": "Siete Picos", "fecha": "2025-05-11T14:10:00+02:00", "km": 9.4}]
     assert linea_paseo(f, f[0]["fecha"]) == "UNA CAMINATA DE 4 HORAS DESDE CERCEDILLA HASTA SIETE PICOS · 9,4 KM · 11 MAYO 2025"
+    lineal = [dict(f[0], lugar="Sierra", lat=40.0, lon=-3.0), dict(f[1], lugar="Sierra", lat=40.06, lon=-3.0)]
+    assert "CIRCULAR" not in linea_paseo(lineal, f[0]["fecha"])
+    vuelta = [dict(lineal[0]), dict(lineal[1], lat=40.0005)]
+    assert linea_paseo(vuelta, f[0]["fecha"]).startswith("UNA CAMINATA CIRCULAR DE 4 HORAS DESDE Y HASTA SIERRA")
     assert km_entre((40.0, -3.0), (40.0, -3.0)) == 0
 
 
@@ -235,3 +256,11 @@ def test_config_categorias_valida():
         assert c["nombre"] and c["definicion"]
     assert len(cfg["paseo"]["sucesos"]) >= 40
     assert cfg["global"]["prompts_excluir"]
+
+
+def test_traduccion_busquedas():
+    from arte_involuntario.traduccion import a_ingles
+
+    assert a_ingles("bolsa de plástico enganchada en un árbol") == "a photo of plastic bag caught in a tree"
+    assert a_ingles("zapatillas colgadas de cables eléctricos") == "a photo of sneakers hanging from power lines"
+    assert a_ingles("rusty gate in a field") == "rusty gate in a field"  # el inglés no se toca

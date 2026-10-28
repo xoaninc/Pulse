@@ -82,7 +82,12 @@ def traer(uuids: list[str], maximo: int | None = None) -> int:
     if not pendientes:
         return 0
     rutas.MINIATURAS_ICLOUD.mkdir(parents=True, exist_ok=True)
-    disco.comprobar(KB_POR_MINIATURA * len(pendientes), f"traer {len(pendientes)} miniaturas de iCloud", rutas.MINIATURAS_ICLOUD)
+    caben = max(0, (disco.libre(rutas.MINIATURAS_ICLOUD) - disco.MARGEN_MINIMO) // KB_POR_MINIATURA)
+    if caben < len(pendientes):
+        print(f"  ⚠ Solo hay espacio para {caben} de {len(pendientes)} miniaturas; traigo esas (las más recientes).")
+        pendientes = pendientes[:caben]
+        if not pendientes:
+            return 0
     _autorizar()
     import Photos
 

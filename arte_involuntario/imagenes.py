@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import math
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -23,13 +25,39 @@ TAG_EXIF_IFD = 0x8769
 TAG_GPS_IFD = 0x8825
 
 
-def abrir(ruta: str | Path, lado_max: int | None = None) -> Image.Image:
+def a_srgb(im: Image.Image) -> Image.Image:
+    """Las fotos del iPhone vienen en Display P3: sin convertir, impresas salen apagadas."""
+    icc = im.info.get("icc_profile")
+    if not icc or im.mode not in ("RGB", "RGBA"):
+        return im
+    try:
+        from PIL import ImageCms
+
+        origen = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+        if "srgb" in (ImageCms.getProfileDescription(origen) or "").lower():
+            return im
+        destino = ImageCms.createProfile("sRGB")
+        conv = ImageCms.profileToProfile(im, origen, destino, outputMode=im.mode,
+                                         renderingIntent=ImageCms.Intent.PERCEPTUAL)
+        conv.info.pop("icc_profile", None)
+        return conv
+    except Exception:
+        return im
+
+
+def abrir(ruta: str | Path, lado_max: int | None = None, color: bool = False) -> Image.Image:
     """Abre una imagen en RGB, girada según su EXIF. Si se da `lado_max`, la reduce
-    (y en JPEG decodifica ya reducida, que es mucho más rápido)."""
+    (y en JPEG decodifica ya reducida, que es mucho más rápido). Con `color=True` además
+    la convierte a sRGB (para las láminas)."""
     im = Image.open(ruta)
     if lado_max and im.format == "JPEG":
         im.draft("RGB", (lado_max, lado_max))
+    icc = im.info.get("icc_profile")
     im = ImageOps.exif_transpose(im)
+    if icc and "icc_profile" not in im.info:
+        im.info["icc_profile"] = icc
+    if color:
+        im = a_srgb(im)
     if im.mode != "RGB":
         if im.mode in ("RGBA", "LA", "P"):
             im = im.convert("RGBA")
@@ -63,10 +91,13 @@ def tam_imagen(ruta: str | Path) -> tuple[int, int]:
 
 def _racional(v) -> float:
     try:
-        return float(v)
+        x = float(v)
     except TypeError:
         n, d = v
-        return n / d if d else 0.0
+        x = n / d if d else float("nan")
+    if not math.isfinite(x):
+        raise ValueError("racional EXIF no válido")
+    return x
 
 
 def _gms(v, ref) -> float | None:
@@ -93,25 +124,30 @@ def exif_basico(ruta: str | Path) -> dict:
     if txt:
         try:
             dt = datetime.strptime(str(txt).strip("\x00 ")[:19], "%Y:%m:%d %H:%M:%S")
-            off = sub.get(0x9011) or sub.get(0x9010)
-            if off:
-                signo = -1 if str(off).startswith("-") else 1
-                hh, mm = str(off).lstrip("+-").split(":")[:2]
-                dt = dt.replace(tzinfo=timezone(signo * timedelta(hours=int(hh), minutes=int(mm))))
-            out["fecha"] = dt
+            if dt.year > 1970:
+                out["fecha"] = dt
         except Exception:
             pass
+        if out["fecha"] is not None:
+            off = str(sub.get(0x9011) or sub.get(0x9010) or "").strip("\x00 ")
+            m = re.fullmatch(r"([+-])(\d\d):(\d\d)", off)
+            if m:
+                signo = -1 if m.group(1) == "-" else 1
+                tz = timezone(signo * timedelta(hours=int(m.group(2)), minutes=int(m.group(3))))
+                out["fecha"] = out["fecha"].replace(tzinfo=tz)
     if gps:
         lat = _gms(gps.get(2), gps.get(1)) if gps.get(2) else None
         lon = _gms(gps.get(4), gps.get(3)) if gps.get(4) else None
-        if lat is not None and lon is not None and not (lat == 0 and lon == 0):
+        if (lat is not None and lon is not None and math.isfinite(lat) and math.isfinite(lon)
+                and abs(lat) <= 90 and abs(lon) <= 180 and not (lat == 0 and lon == 0)):
             out["lat"], out["lon"] = lat, lon
         if gps.get(6) is not None:
             try:
                 alt = _racional(gps.get(6))
                 if gps.get(5) in (1, b"\x01"):
                     alt = -alt
-                out["alt"] = alt
+                if math.isfinite(alt) and abs(alt) < 9000:
+                    out["alt"] = alt
             except Exception:
                 pass
     return out
@@ -128,23 +164,17 @@ def recorte_cuadrado(im: Image.Image, cx: float = 0.5, cy: float = 0.5, zoom: fl
 
 
 def a_blanco_y_negro(im: Image.Image, contraste: str = "normal") -> Image.Image:
-    """Conversión a B/N pensada para impresión: mezcla de canales con algo más de rojo
-    (cielos más densos, como un filtro amarillo-naranja en película), recorte suave de
-    extremos y una curva en S según el contraste elegido."""
-    r, g, b = im.split()
-    gris = Image.merge("RGB", (r, g, b)).convert(
-        "L", (0.40, 0.45, 0.15, 0)
-    )
-    corte = {"suave": 0.2, "normal": 0.5, "alto": 1.2}.get(contraste, 0.5)
-    gris = ImageOps.autocontrast(gris, cutoff=corte)
-    fuerza = {"suave": 0.0, "normal": 0.25, "alto": 0.5}.get(contraste, 0.25)
-    if fuerza:
-        import math
+    """Conversión a B/N pensada para impresión en reprografía: luminancia, estiramiento
+    moderado sin mover el tono medio (la niebla sigue siendo niebla), sombras protegidas
+    (negro ≈ 10/255) y medios algo abiertos contra la ganancia de punto. Devuelve modo «L»."""
+    import numpy as np
 
-        lut = []
-        for i in range(256):
-            x = i / 255
-            s = 0.5 - 0.5 * math.cos(math.pi * x)  # curva en S
-            lut.append(round(255 * ((1 - fuerza) * x + fuerza * s)))
-        gris = gris.point(lut)
-    return gris.convert("RGB")
+    a = np.asarray(im.convert("RGB").convert("L", (0.30, 0.59, 0.11, 0)), np.float32) / 255
+    lo, hi = np.percentile(a, (0.5, 99.5))
+    ganancia = min(1 / max(hi - lo, 1e-3), {"suave": 1.0, "normal": 1.15, "alto": 1.4}.get(contraste, 1.15))
+    medio = (lo + hi) / 2
+    a = np.clip((a - medio) * ganancia + medio, 0, 1)
+    if contraste == "alto":
+        a = 0.7 * a + 0.3 * (0.5 - 0.5 * np.cos(np.pi * a))
+    a = 0.04 + 0.94 * a ** 0.92
+    return Image.fromarray((a * 255 + 0.5).astype(np.uint8), "L")

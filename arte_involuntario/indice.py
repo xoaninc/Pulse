@@ -58,10 +58,13 @@ def _set_meta(con, k, v):
     con.execute("INSERT OR REPLACE INTO meta(k, v) VALUES (?, ?)", (k, str(v)))
 
 
-def registrar(fotos: Iterable[Foto], fuente: str, borrar_ausentes: bool) -> dict:
-    """Guarda/actualiza los metadatos de todas las fotos de la fuente."""
+def registrar(fotos: Iterable[Foto], fuente: str, borrar_ausentes: bool, origen: str = "") -> dict:
+    """Guarda/actualiza los metadatos de todas las fotos de la fuente. Si se cambia de fuente
+    (otra carpeta, otra fototeca), las fotos de la anterior salen de la galería, pero sus
+    vectores se conservan: volver a ella es instantáneo."""
     con = conectar()
     gen = int(_meta(con, "generacion", 0)) + 1
+    origen_previo = _meta(con, "origen")
     n = 0
     sin_imagen = 0
     t0 = time.time()
@@ -79,12 +82,13 @@ def registrar(fotos: Iterable[Foto], fuente: str, borrar_ausentes: bool) -> dict
     if lote:
         con.executemany("INSERT OR REPLACE INTO fotos VALUES (?,?,?,?,?)", lote)
     borradas = 0
-    if borrar_ausentes:
-        cur = con.execute("DELETE FROM fotos WHERE fuente=? AND generacion<?", (fuente, gen))
+    if borrar_ausentes or (origen_previo and origen_previo != f"{fuente}:{origen}"):
+        cur = con.execute("DELETE FROM fotos WHERE generacion<?", (gen,))
         borradas = cur.rowcount
-        con.execute("DELETE FROM vectores WHERE uuid NOT IN (SELECT uuid FROM fotos)")
     _set_meta(con, "generacion", gen)
     _set_meta(con, "fuente", fuente)
+    _set_meta(con, "origen", f"{fuente}:{origen}")
+    _set_meta(con, "ultima_lectura", time.time())
     con.commit()
     con.close()
     print(f"\r  leídas {n} fotos en {time.time() - t0:.0f} s" + " " * 20)
@@ -195,6 +199,34 @@ def foto_cualquiera(uuid: str) -> dict | None:
     r = con.execute("SELECT datos FROM fotos WHERE uuid=?", (uuid,)).fetchone()
     con.close()
     return json.loads(r[0]) if r else None
+
+
+def modelo_usado() -> str | None:
+    if not rutas.BD.exists():
+        return None
+    con = conectar()
+    m = _meta(con, "modelo")
+    con.close()
+    return m
+
+
+def guardar_modelo_usado(preset: str) -> None:
+    con = conectar()
+    _set_meta(con, "modelo", preset)
+    con.commit()
+    con.close()
+
+
+def ultima_lectura() -> float | None:
+    if not rutas.BD.exists():
+        return None
+    con = conectar()
+    v = _meta(con, "ultima_lectura")
+    con.close()
+    try:
+        return float(v) if v else None
+    except ValueError:
+        return None
 
 
 def sin_imagen() -> list[str]:

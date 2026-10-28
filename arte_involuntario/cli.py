@@ -4,7 +4,8 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 
 from . import disco, rutas
 
@@ -16,40 +17,55 @@ Pasos:
   ./arte galeria         abre la galería en el navegador para elegir y montar las láminas
   ./arte laminas         vuelve a generar los PDF con la última selección
   ./arte estado          qué hay analizado y cuánto ocupa
-  ./arte limpiar         borra descargas y cachés (con --todo, también modelo e índice)
-  ./arte todo            analizar + galeria
+  ./arte limpiar         borra cachés y descargas que ya no se usan (con --todo, también modelo e índice)
+  ./arte todo            analizar (si hace falta) + galeria
 """
 
+HORAS_RELECTURA = 12  # `todo` no vuelve a leer la fototeca si se leyó hace menos de esto
 
-def _fecha(s: str | None):
+
+def _fecha(s: str | None, fin: bool = False):
     if not s:
         return None
-    return datetime.fromisoformat(s).astimezone()
+    try:
+        dt = datetime.fromisoformat(s.strip())
+    except ValueError:
+        raise RuntimeError(f"Fecha «{s}» no válida: usa AAAA-MM-DD, por ejemplo 2024-05-11") from None
+    if fin and len(s.strip()) <= 10:
+        dt += timedelta(days=1)  # --hasta 2024-05-11 incluye todo ese día
+    return dt.astimezone()
+
+
+def _modelo_de(a) -> str:
+    """El modelo indicado, o el último con el que se analizó."""
+    from . import indice
+
+    if getattr(a, "modelo", None):
+        return a.modelo
+    return indice.modelo_usado() or "rapido"
 
 
 def cmd_analizar(a) -> None:
     from . import fuentes, indice
-    from .modelo import Modelo, resolver_preset
+    from .modelo import Modelo, clave_modelo
 
     rutas.preparar()
-    preset = resolver_preset(a.modelo)
-    if not any(rutas.MODELOS.rglob("*.safetensors")) and not any(rutas.MODELOS.rglob("*.bin")):
-        disco.comprobar(int(preset.descarga_mb * 1.3 * 1024**2), f"descargar el modelo ({preset.descarga_mb} MB)")
+    a.modelo = _modelo_de(a)
     print(f"Espacio libre: {rutas.legible(disco.libre())}")
-    desde, hasta = _fecha(a.desde), _fecha(a.hasta)
+    desde, hasta = _fecha(a.desde), _fecha(a.hasta, fin=True)
     if a.carpeta:
         print(f"· Leyendo la carpeta {a.carpeta}…")
         it = fuentes.desde_carpeta(a.carpeta, desde, hasta)
-        fuente = "carpeta"
+        fuente, origen = "carpeta", str(a.carpeta)
     else:
         print("· Leyendo la fototeca de Fotos (la primera vez puede tardar un minuto)…")
         it = fuentes.desde_fototeca(a.biblioteca, desde, hasta, a.album)
-        fuente = "fotos"
+        fuente, origen = "fotos", str(a.biblioteca or "sistema")
     if a.limite:
         import itertools
 
         it = itertools.islice(it, a.limite)
-    r = indice.registrar(it, fuente, borrar_ausentes=not (a.desde or a.hasta or a.album or a.limite))
+    r = indice.registrar(it, fuente, borrar_ausentes=not (a.desde or a.hasta or a.album or a.limite), origen=origen)
     print(f"  {r['fotos']} fotos en la fuente")
     import gc
 
@@ -59,7 +75,10 @@ def cmd_analizar(a) -> None:
             from . import icloud
 
             uuids = indice.sin_imagen()
-            icloud.traer(uuids, a.max_icloud)
+            try:
+                icloud.traer(uuids, a.max_icloud)
+            except (disco.SinEspacio, RuntimeError) as e:
+                print(f"  ⚠ {e}\n  (sigo sin esas miniaturas de iCloud)")
             for u in uuids:
                 c = icloud.ruta_cache(u)
                 if c.exists():
@@ -67,9 +86,14 @@ def cmd_analizar(a) -> None:
         else:
             print(f"  {r['sin_imagen_local']} no tienen ninguna imagen en este Mac (solo en iCloud): se saltan.")
             print("  (Si quieres incluirlas: ./arte analizar --traer-icloud  · ~100 KB por foto)")
-    disco.comprobar(r["fotos"] * 4096, "guardar el índice")
+    if not indice.pendientes(clave_modelo(a.modelo)):
+        print("  todas las fotos ya estaban analizadas")
+        indice.guardar_modelo_usado(a.modelo)
+        return
+    disco.comprobar(r["fotos"] * 2048, "guardar el índice", margen=disco.MARGEN_PEQUENO)
     modelo = Modelo(a.modelo)
     res = indice.vectorizar(modelo, lote=a.lote)
+    indice.guardar_modelo_usado(a.modelo)
     est = indice.estadisticas()
     print(f"✓ Analizadas {est['analizadas'].get(modelo.clave, 0)} fotos ({res['errores']} con error).")
     print("  Siguiente paso:  ./arte galeria")
@@ -78,7 +102,7 @@ def cmd_analizar(a) -> None:
 def cmd_galeria(a) -> None:
     from .servidor import servir
 
-    servir(a.modelo, a.puerto, abrir=not a.no_abrir)
+    servir(_modelo_de(a), a.puerto, abrir=not a.no_abrir)
 
 
 def cmd_laminas(a) -> None:
@@ -102,29 +126,61 @@ def cmd_estado(a) -> None:
     for m, n in est["analizadas"].items():
         print(f"  analizadas con {m}: {n}")
     print(f"  con error al abrir: {est['errores']}")
+    print(f"  modelo de la galería: {indice.modelo_usado() or 'rapido'}")
     print("Espacio:")
     for k, v in disco.resumen().items():
         print(f"  {k:18s} {rutas.legible(v)}")
 
 
 def cmd_limpiar(a) -> None:
-    borrar = [rutas.ORIGINALES, rutas.MINIATURAS_ICLOUD, rutas.TEXTOS_CACHE]
-    if a.todo:
-        borrar += [rutas.MODELOS, rutas.BD, rutas.BD.with_suffix(".sqlite-wal"), rutas.BD.with_suffix(".sqlite-shm")]
+    from .generar import leer_seleccion
+
     liberado = 0
-    for p in borrar:
+
+    def borrar(p):
+        nonlocal liberado
         if p.is_dir():
             liberado += rutas.tam_carpeta(p)
             shutil.rmtree(p, ignore_errors=True)
         elif p.exists():
             liberado += p.stat().st_size
             p.unlink()
-    print(f"Liberados {rutas.legible(liberado)}." + ("" if a.todo else " (Usa --todo para borrar también el modelo y el índice.)"))
-    print("Tu selección (datos/seleccion.json) y las láminas (salida/) se conservan.")
+
+    borrar(rutas.TEXTOS_CACHE)
+    if a.todo:
+        for p in (rutas.ORIGINALES, rutas.MINIATURAS_ICLOUD, rutas.MODELOS, rutas.BD,
+                  rutas.BD.with_suffix(".sqlite-wal"), rutas.BD.with_suffix(".sqlite-shm")):
+            borrar(p)
+    else:
+        # conservar los originales de las fotos que tienes elegidas (y las miniaturas de iCloud,
+        # que forman parte del índice)
+        try:
+            sel = leer_seleccion()
+            usar = {x["uuid"] for x in sel.get("arte", [])} | {x["uuid"] for x in sel.get("paseo", {}).get("fotos", [])}
+        except Exception:
+            usar = set()
+        if rutas.ORIGINALES.exists():
+            for d in rutas.ORIGINALES.iterdir():
+                if d.is_dir() and d.name not in usar:
+                    borrar(d)
+    print(f"Liberados {rutas.legible(liberado)}.")
+    if not a.todo:
+        print("Se conservan el modelo, el índice, tu selección, sus originales y las láminas.\n"
+              "Para borrarlo todo menos la selección y las láminas: ./arte limpiar --todo")
 
 
 def cmd_todo(a) -> None:
-    cmd_analizar(a)
+    from . import indice
+    from .modelo import clave_modelo
+
+    a.modelo = _modelo_de(a)
+    ultima = indice.ultima_lectura()
+    reciente = ultima and time.time() - ultima < HORAS_RELECTURA * 3600
+    if reciente and indice.estadisticas()["analizadas"].get(clave_modelo(a.modelo)) and not a.releer:
+        print(f"(La fototeca se leyó hace {int((time.time() - ultima) / 60)} min: abro la galería directamente.\n"
+              " Para buscar fotos nuevas: ./arte analizar   o   ./arte todo --releer)")
+    else:
+        cmd_analizar(a)
     cmd_galeria(a)
 
 
@@ -133,15 +189,16 @@ def main(argv=None) -> None:
     sub = ap.add_subparsers(dest="cmd")
 
     def comunes(p):
-        p.add_argument("--modelo", default="rapido",
-                       help="rapido (por defecto), preciso (más lento, más descarga) o arquitectura:pesos de open_clip")
+        p.add_argument("--modelo", default=None,
+                       help="rapido (por defecto), preciso (más fino y lento, descarga 1,8 GB) o arquitectura:pesos "
+                            "de open_clip. Si no lo indicas, se usa el último con el que analizaste.")
 
     p = sub.add_parser("analizar", help="analiza la fototeca")
     comunes(p)
     p.add_argument("--carpeta", help="analizar una carpeta en vez de la app Fotos")
     p.add_argument("--biblioteca", help="ruta a otra .photoslibrary")
     p.add_argument("--desde", help="solo fotos desde esta fecha (AAAA-MM-DD)")
-    p.add_argument("--hasta", help="solo fotos hasta esta fecha (AAAA-MM-DD)")
+    p.add_argument("--hasta", help="solo fotos hasta esta fecha, incluida (AAAA-MM-DD)")
     p.add_argument("--album", help="solo este álbum de Fotos")
     p.add_argument("--limite", type=int, help="(pruebas) analizar solo N fotos")
     p.add_argument("--lote", type=int, default=32)
@@ -164,10 +221,10 @@ def main(argv=None) -> None:
     p.set_defaults(fn=cmd_estado)
 
     p = sub.add_parser("limpiar", help="libera espacio")
-    p.add_argument("--todo", action="store_true", help="borra también el modelo descargado y el índice")
+    p.add_argument("--todo", action="store_true", help="borra también el modelo descargado, el índice y los originales")
     p.set_defaults(fn=cmd_limpiar)
 
-    p = sub.add_parser("todo", help="analizar y abrir la galería")
+    p = sub.add_parser("todo", help="analizar (si hace falta) y abrir la galería")
     comunes(p)
     for arg in ("--carpeta", "--biblioteca", "--desde", "--hasta", "--album"):
         p.add_argument(arg)
@@ -175,6 +232,7 @@ def main(argv=None) -> None:
     p.add_argument("--lote", type=int, default=32)
     p.add_argument("--traer-icloud", action="store_true")
     p.add_argument("--max-icloud", type=int, default=None)
+    p.add_argument("--releer", action="store_true", help="volver a leer la fototeca aunque se haya leído hace poco")
     p.add_argument("--puerto", type=int, default=8765)
     p.add_argument("--no-abrir", action="store_true")
     p.set_defaults(fn=cmd_todo)
@@ -191,6 +249,14 @@ def main(argv=None) -> None:
     except KeyboardInterrupt:
         print("\nCancelado.")
         sys.exit(130)
-    except RuntimeError as e:
+    except (RuntimeError, ValueError) as e:
         print(f"\n✗ {e}")
+        sys.exit(1)
+    except Exception as e:  # cualquier otra cosa: mensaje corto + pista, sin traza de Python
+        print(f"\n✗ Error inesperado ({type(e).__name__}): {e}")
+        print("  Si se repite, vuelve a ejecutar ./instalar.sh; los detalles técnicos:  ARTE_DEPURAR=1 ./arte …")
+        import os
+
+        if os.environ.get("ARTE_DEPURAR"):
+            raise
         sys.exit(1)

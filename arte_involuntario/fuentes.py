@@ -140,8 +140,10 @@ def foto_de_photoinfo(p, extra: dict | None = None) -> Foto:
     extra = extra or {}
     orig = None
     try:
-        if p.hasadjustments and p.path_edited and os.path.exists(p.path_edited):
-            orig = p.path_edited
+        if p.hasadjustments:
+            # editada: solo vale la versión editada; si no está en disco se descargará la actual
+            pe = p.path_edited
+            orig = pe if pe and os.path.exists(pe) else None
         elif p.path and os.path.exists(p.path) and not p.ismissing:
             orig = p.path
     except Exception:
@@ -185,7 +187,7 @@ def foto_de_photoinfo(p, extra: dict | None = None) -> Foto:
     except Exception:
         firma = str(analisis)
     desc = ""
-    for attr in ("ai_caption", "title", "description"):
+    for attr in ("title", "description"):
         v = _seguro(p, attr, "")
         if isinstance(v, str) and v.strip():
             desc = v.strip()
@@ -219,6 +221,12 @@ def foto_de_photoinfo(p, extra: dict | None = None) -> Foto:
     )
 
 
+def rutas_legible(n: int) -> str:
+    from .rutas import legible
+
+    return legible(n)
+
+
 def ruta_fototeca(biblioteca: str | None = None) -> Path | None:
     if biblioteca:
         return Path(biblioteca).expanduser()
@@ -242,6 +250,13 @@ def comprobar_espacio_fototeca(biblioteca: str | None = None) -> None:
     lib = ruta_fototeca(biblioteca)
     if not lib:
         return
+    try:
+        from osxphotos.sqlite_utils import sqlite_db_is_locked
+
+        if not sqlite_db_is_locked(str(lib / "database" / "Photos.sqlite")):
+            return  # Fotos cerrada: osxphotos lee la base de datos sin copiarla
+    except Exception:
+        pass
     tam = 0
     for f in ("database/Photos.sqlite", "database/Photos.sqlite-wal", "database/search/psi.sqlite"):
         try:
@@ -251,7 +266,11 @@ def comprobar_espacio_fototeca(biblioteca: str | None = None) -> None:
     if tam:
         import tempfile
 
-        disco.comprobar(int(tam * 1.2), "leer la base de datos de Fotos", Path(tempfile.gettempdir()))
+        if not disco.cabe(int(tam * 1.2), Path(tempfile.gettempdir()), margen=disco.MARGEN_PEQUENO):
+            raise disco.SinEspacio(
+                f"La app Fotos está abierta y habría que copiar su base de datos ({rutas_legible(tam)}) "
+                "y no cabe. Cierra Fotos con ⌘Q y vuelve a lanzar ./arte analizar."
+            )
 
 
 def _altitudes(db) -> dict[str, dict]:
@@ -276,20 +295,43 @@ def _altitudes(db) -> dict[str, dict]:
     return out
 
 
+MENSAJE_PERMISO = (
+    "macOS no deja leer la fototeca. Ve a Ajustes del Sistema → Privacidad y seguridad → "
+    "Acceso total al disco y activa «Terminal». Después cierra la Terminal con ⌘Q, ábrela de nuevo "
+    "y vuelve a ejecutar la orden."
+)
+
+
 def abrir_fototeca(biblioteca: str | None = None):
+    import logging
+
+    logging.getLogger("osxphotos").setLevel(logging.ERROR)  # sin avisos en inglés por cada foto
     try:
         import osxphotos
     except ImportError as e:  # pragma: no cover
         raise RuntimeError("Falta osxphotos. Ejecuta ./instalar.sh de nuevo.") from e
+    lib = ruta_fototeca(biblioteca)
+    if biblioteca and (not lib or not lib.exists()):
+        raise RuntimeError(f"No encuentro la fototeca {biblioteca}")
+    if lib:
+        try:
+            with open(lib / "database" / "Photos.sqlite", "rb") as f:
+                f.read(16)
+        except PermissionError as e:
+            raise RuntimeError(MENSAJE_PERMISO) from e
+        except FileNotFoundError:
+            pass
     try:
-        return osxphotos.PhotosDB(dbfile=biblioteca) if biblioteca else osxphotos.PhotosDB()
+        return osxphotos.PhotosDB(dbfile=str(lib)) if lib else osxphotos.PhotosDB()
     except Exception as e:
-        msg = str(e)
-        if "permission" in msg.lower() or "operation not permitted" in msg.lower() or "Errno 1" in msg:
+        cadena = " ".join(str(x) for x in (e, e.__cause__, e.__context__) if x).lower()
+        if any(t in cadena for t in ("permission", "operation not permitted", "errno 1", "error copying")):
+            raise RuntimeError(MENSAJE_PERMISO) from e
+        if isinstance(e, FileNotFoundError) or "could not get path" in cadena:
             raise RuntimeError(
-                "macOS no deja leer la fototeca. Ve a Ajustes del Sistema → Privacidad y seguridad → "
-                "Acceso total al disco y activa «Terminal» (o la app de terminal que uses). "
-                "Después cierra la Terminal con ⌘Q y vuelve a abrirla."
+                "No encuentro tu fototeca de Fotos. Si nunca has abierto la app Fotos en este Mac, ábrela una vez. "
+                "Si la fototeca no está en Imágenes: ./arte analizar --biblioteca \"/ruta/a/Fotos.photoslibrary\". "
+                "Y comprueba el «Acceso total al disco» de la Terminal."
             ) from e
         raise
 

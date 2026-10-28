@@ -115,12 +115,44 @@ class Paseos:
             sesiones.append(actual)
         return sesiones
 
+    def _traza(self, idx: list[int]) -> list[tuple[int, float]]:
+        """(índice, km acumulados) de las fotos con GPS fiable. Descarta picos (una posición
+        desviada que va y vuelve) y velocidades imposibles a pie, y no suma el temblor del GPS
+        (pasos de menos de 40 m)."""
+        fotos = self.ix.fotos
+        con = [(i, _gps(fotos[i])) for i in idx if _gps(fotos[i])]
+        buenos = []
+        for k, (i, g) in enumerate(con):
+            if 0 < k < len(con) - 1:
+                a, b = con[k - 1][1], con[k + 1][1]
+                if km_entre(a, g) + km_entre(g, b) > 3 * km_entre(a, b) + 0.4:
+                    continue  # pico: se va y vuelve
+            if buenos:
+                j, h = buenos[-1]
+                horas = max((fotos[i]["ts"] - fotos[j]["ts"]) / 3600, 1 / 60)
+                if km_entre(h, g) / horas > 15 and km_entre(h, g) > 0.3:
+                    continue  # más rápido que caminando o en bici
+            buenos.append((i, g))
+        out: list[tuple[int, float]] = []
+        total, ultimo = 0.0, None
+        for i, g in buenos:
+            if ultimo is None:
+                ultimo = g
+            else:
+                d = km_entre(ultimo, g)
+                if d >= 0.04:
+                    total += d
+                    ultimo = g
+            out.append((i, total))
+        return out
+
     def _resumen(self, idx: list[int], pid: str) -> dict:
         fotos = self.ix.fotos
         utiles = [i for i in idx if self._es_util(i)]
         nat = [i for i in utiles if self.natural[i] > 0]
         pts = [_gps(fotos[i]) for i in idx if _gps(fotos[i])]
-        km = sum(km_entre(a, b) for a, b in zip(pts, pts[1:]) if km_entre(a, b) < 5) if len(pts) > 1 else 0.0
+        traza = self._traza(idx)
+        km = traza[-1][1] if traza else 0.0
         radio = max((km_entre(pts[0], p) for p in pts), default=0.0) if pts else 0.0
         horas = (fotos[idx[-1]]["ts"] - fotos[idx[0]]["ts"]) / 3600
         frac = len(nat) / max(1, len(utiles))
@@ -152,7 +184,8 @@ class Paseos:
         if self._paseos is not None:
             return self._paseos
         sesiones = [s for s in self._sesiones(hueco_min, salto_km) if len(s) >= min_fotos]
-        paseos = [self._resumen(s, f"p{k}") for k, s in enumerate(sesiones)]
+        # id = instante de la primera foto: no cambia aunque se analicen más fotos después
+        paseos = [self._resumen(s, f"p{int(self.ix.fotos[s[0]]['ts'])}") for s in sesiones]
         paseos = [p for p in paseos if p["naturales"] >= 4]
         paseos.sort(key=lambda p: -p["puntos"])
         self._paseos = paseos
@@ -162,6 +195,12 @@ class Paseos:
         for p in self.detectar():
             if p["id"] == pid:
                 return p
+        if pid.startswith("r") and "-" in pid:  # intervalo elegido a mano: se reconstruye
+            try:
+                d0, d1 = (float(x) for x in pid[1:].split("-", 1))
+                return self.por_rango(d0, d1)
+            except ValueError:
+                return None
         return None
 
     def por_rango(self, desde_ts: float, hasta_ts: float) -> dict | None:
@@ -176,33 +215,14 @@ class Paseos:
 
     # ------------------------------------------------------------------
     def km_acumulados(self, idx: list[int]) -> list[float | None]:
-        """Km recorridos hasta cada foto (interpolando en las que no tienen GPS)."""
+        """Km recorridos hasta cada foto (interpolando en las que no tienen GPS fiable)."""
+        traza = self._traza(idx)
+        if not traza:
+            return [None] * len(idx)
         fotos = self.ix.fotos
-        acum: list[float | None] = []
-        total = 0.0
-        ultimo = None
-        for i in idx:
-            g = _gps(fotos[i])
-            if g:
-                if ultimo:
-                    d = km_entre(ultimo, g)
-                    if d < 5:
-                        total += d
-                ultimo = g
-                acum.append(total)
-            else:
-                acum.append(None)
-        if all(a is None for a in acum):
-            return acum
-        ts = [fotos[i]["ts"] for i in idx]
-        conocidos = [(t, a) for t, a in zip(ts, acum) if a is not None]
-        out = []
-        for t, a in zip(ts, acum):
-            if a is not None:
-                out.append(a)
-            else:
-                out.append(float(np.interp(t, [c[0] for c in conocidos], [c[1] for c in conocidos])))
-        return out
+        t_con = [fotos[i]["ts"] for i, _ in traza]
+        km_con = [km for _, km in traza]
+        return [float(np.interp(fotos[i]["ts"], t_con, km_con)) for i in idx]
 
     def _calidad(self, idx: list[int]) -> np.ndarray:
         suc = self.suc_sim[idx].max(axis=1) if self.suc_sim.shape[1] else np.zeros(len(idx))
@@ -269,11 +289,10 @@ class Paseos:
 
     def fichas(self, idx: list[int]) -> list[dict]:
         kms = self.km_acumulados(idx)
-        usados: Counter = Counter()
         out = []
         for i, km in zip(idx, kms):
             f = self.ix.fotos[i]
-            suc = self._suceso(i, usados)
+            suc = self._suceso(i)
             alt = f.get("alt")
             out.append({
                 "uuid": f["uuid"],
@@ -291,17 +310,33 @@ class Paseos:
             })
         return out
 
-    def _suceso(self, i: int, usados: Counter) -> dict | None:
-        """El suceso más parecido a la foto, penalizando los ya usados para que la secuencia
-        no repita la misma frase en cada foto."""
+    def _suceso(self, i: int, evitar: Counter | None = None) -> dict | None:
+        """El suceso que mejor describe la foto. Con `evitar`, entre los casi igual de buenos
+        (≤ 0,01 de diferencia) elige el menos repetido: variedad sin inventar lo que no se ve."""
         if not self.sucesos or not self.suc_sim.shape[1]:
             return None
         s = self.suc_sim[i]
-        orden = np.argsort(-s)[:12]
-        mejor = max(orden, key=lambda j: s[j] - 0.008 * usados[self.sucesos[int(j)]["palabra"]])
-        d = self.sucesos[int(mejor)]
-        usados[d["palabra"]] += 1
+        orden = np.argsort(-s)[:8]
+        mejor = int(orden[0])
+        if evitar is not None:
+            casi = [int(j) for j in orden if s[j] >= s[orden[0]] - 0.01]
+            mejor = min(casi, key=lambda j: (evitar[self.sucesos[j]["palabra"]], -s[j]))
+            evitar[self.sucesos[mejor]["palabra"]] += 1
+        d = self.sucesos[mejor]
         return {"frase": d["frase"], "palabra": d["palabra"], "confianza": round(float(s[mejor]) * 100, 1)}
+
+    def variar_sucesos(self, fichas: list[dict], elegidas: list[str]) -> None:
+        """Reparte los sucesos entre las fotos elegidas evitando repetir la misma frase."""
+        evitar: Counter = Counter()
+        por_uuid = {f["uuid"]: f for f in fichas}
+        for u in elegidas:
+            i = self.ix.pos.get(u)
+            f = por_uuid.get(u)
+            if i is None or f is None:
+                continue
+            suc = self._suceso(i, evitar)
+            if suc:
+                f["suceso"], f["frase"] = suc, suc["frase"]
 
     def completar_altitudes(self, uuids: list[str]) -> None:
         """Lee la altitud del EXIF de los originales locales (Fotos no la guarda en su base)."""
@@ -335,7 +370,7 @@ def frase_borrador(hora: str, km: float | None, alt: float | None, suceso: str) 
 
 
 def linea_paseo(fichas: list[dict], inicio: str | None) -> str:
-    """Línea descriptiva al estilo Fulton: «CAMINATA DE 4 HORAS DESDE X HASTA Y · 12,3 KM · 3 MAYO 2025»."""
+    """Línea descriptiva al estilo Fulton: «UNA CAMINATA DE 4 HORAS DESDE X HASTA Y · 12,3 KM · 3 MAYO 2025»."""
     if not fichas:
         return ""
     l0 = fichas[0].get("lugar") or ""
@@ -344,14 +379,23 @@ def linea_paseo(fichas: list[dict], inicio: str | None) -> str:
         h = (datetime.fromisoformat(fichas[-1]["fecha"]) - datetime.fromisoformat(fichas[0]["fecha"])).total_seconds() / 3600
     except Exception:
         h = 0
-    dur = f"{round(h)} HORAS" if h >= 1.5 else ("UNA HORA" if h >= 0.75 else "UN PASEO")
+    dur = f"{round(h)} HORAS" if h >= 1.5 else ("UNA HORA" if h >= 0.75 else "")
     kms = [f["km"] for f in fichas if f.get("km") is not None]
-    km = f" · {num_es(kms[-1] - kms[0])} KM" if len(kms) > 1 and kms[-1] - kms[0] > 0.2 else ""
-    if l0 and l1 and l0 != l1:
+    total = (kms[-1] - kms[0]) if len(kms) > 1 else 0.0
+    km = f" · {num_es(total)} KM" if total > 0.2 else ""
+    con_gps = [f for f in fichas if f.get("lat") is not None and f.get("lon") is not None]
+    circular = False
+    if len(con_gps) >= 2:
+        d = km_entre((con_gps[0]["lat"], con_gps[0]["lon"]), (con_gps[-1]["lat"], con_gps[-1]["lon"]))
+        circular = total > 0.5 and d < max(0.3, 0.15 * total)
+    if circular:
+        donde = f" DESDE Y HASTA {l0}" if l0 else ""
+    elif l0 and l1 and l0 != l1:
         donde = f" DESDE {l0} HASTA {l1}"
     elif l0:
-        donde = f" CIRCULAR EN {l0}"
+        donde = f" EN {l0}"
     else:
         donde = ""
-    pre = "UNA CAMINATA DE " if dur != "UN PASEO" else ""
-    return f"{pre}{dur}{donde}{km} · {fecha_larga(inicio)}".upper().strip(" ·")
+    tipo = "UNA CAMINATA CIRCULAR" if circular else "UNA CAMINATA"
+    cuerpo = f"{tipo} DE {dur}" if dur else ("UN PASEO CIRCULAR" if circular else "UN PASEO")
+    return f"{cuerpo}{donde}{km} · {fecha_larga(inicio)}".upper().strip(" ·")

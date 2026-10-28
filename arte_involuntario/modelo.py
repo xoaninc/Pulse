@@ -27,8 +27,8 @@ class Preset:
 PRESETS: dict[str, Preset] = {
     "rapido": Preset("rapido", "MobileCLIP2-S2", "dfndr2b", 420,
                      "MobileCLIP2-S2 de Apple: rápido y ligero, buena precisión."),
-    "preciso": Preset("preciso", "ViT-L-14", "dfn2b", 1750,
-                      "ViT-L/14 DFN-2B: más fino con conceptos raros, ~4x más lento."),
+    "preciso": Preset("preciso", "MobileCLIP2-S3", "dfndr2b", 1000,
+                      "MobileCLIP2-S3 de Apple: algo más fino, ~1,5x más lento, descarga 1 GB."),
 }
 PRESET_POR_DEFECTO = "rapido"
 
@@ -61,11 +61,34 @@ def elegir_dispositivo() -> str:
     return "cpu"
 
 
+def descargado(preset: str) -> bool:
+    """¿Están ya los pesos de este modelo en datos/modelos?"""
+    p = resolver_preset(preset)
+    try:
+        import open_clip
+
+        cfg = open_clip.pretrained.get_pretrained_cfg(p.arquitectura, p.pretrained)
+        repo = (cfg.get("hf_hub") or "").strip("/")
+        if repo:
+            carpeta = rutas.MODELOS / "hub" / ("models--" + repo.replace("/", "--"))
+            return any(carpeta.rglob("*.safetensors")) or any(carpeta.rglob("*.bin"))
+    except Exception:
+        pass
+    return False
+
+
 class Modelo:
     def __init__(self, preset: str = PRESET_POR_DEFECTO, dispositivo: str | None = None, verbose: bool = True):
         rutas.preparar()
         import torch
         import open_clip
+
+        from . import disco
+
+        if not descargado(preset):
+            mb = resolver_preset(preset).descarga_mb
+            disco.comprobar(int(mb * 1.2 * 1024**2), f"descargar el modelo de visión ({mb} MB, solo la primera vez)",
+                            rutas.MODELOS)
 
         self.preset = resolver_preset(preset)
         self.clave = clave_modelo(preset)
@@ -88,12 +111,11 @@ class Modelo:
             else:
                 raise
         modelo.eval()
-        # MobileCLIP trae capas que se pueden «fusionar» para inferencia (más rápido).
+        # MobileCLIP trae ramas que se «fusionan» para inferencia: mismo resultado, 1,5-1,8x más rápido.
         try:
-            from open_clip import utils as ocu
+            from timm.utils import reparameterize_model
 
-            if hasattr(ocu, "reparameterize_model"):
-                modelo = ocu.reparameterize_model(modelo)
+            modelo = reparameterize_model(modelo)
         except Exception:
             pass
         self.modelo = modelo

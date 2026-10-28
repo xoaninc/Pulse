@@ -2,8 +2,10 @@
 
 Orden de preferencia:
  1. versión editada u original que ya esté en el disco (no copia nada);
- 2. descarga desde iCloud de esa foto concreta (osxphotos + Fotos), a datos/originales/;
+ 2. descarga desde iCloud de esa foto concreta con PhotoKit (versión actual, con tus
+    ediciones), a datos/originales/;
  3. si no se puede, la mayor previsualización local (avisando de la resolución).
+Nunca deja sin láminas: cualquier fallo de iCloud se convierte en un aviso.
 """
 from __future__ import annotations
 
@@ -11,12 +13,18 @@ import json
 import os
 import shutil
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as TiempoAgotado
 from pathlib import Path
 
 from . import disco, rutas
 
 MAPA = rutas.ORIGINALES / "mapa.json"
-MB_POR_FOTO = 12 * 1024**2  # estimación prudente (HEIC/JPEG de iPhone: 2-6 MB; ProRAW mucho más)
+MB_POR_FOTO = 12 * 1024**2      # estimación prudente (HEIC/JPEG de iPhone: 2-6 MB; ProRAW mucho más)
+SEGUNDOS_POR_FOTO = 120          # si iCloud no la entrega en este tiempo, se usa la previsualización
+SEGUNDOS_TOTALES = 15 * 60       # tope para todas las descargas de una generación
+FALLOS_SEGUIDOS = 3              # si fallan varias seguidas, iCloud no está respondiendo: parar
 
 
 def _mapa() -> dict:
@@ -36,6 +44,10 @@ def _es_imagen_valida(ruta: str | None) -> bool:
         return False
     try:
         from PIL import Image
+
+        from . import imagenes
+
+        assert imagenes  # al importarlo se registra el lector de HEIC
 
         with Image.open(ruta) as im:
             im.size
@@ -57,10 +69,16 @@ def resolver(fotos: list[dict], descargar: bool = True, aviso=print) -> dict[str
             out[u] = {"ruta": mapa[u], "origen": "icloud"}
         else:
             faltan.append(f)
-    if faltan and descargar and any(f.get("fuente") == "fotos" for f in faltan) and sys.platform == "darwin":
-        nuevos = _descargar_icloud([f for f in faltan if f.get("fuente") == "fotos"], aviso)
-        mapa.update(nuevos)
-        _guardar_mapa(mapa)
+    de_fotos = [f for f in faltan if f.get("fuente") == "fotos"]
+    if de_fotos and descargar and sys.platform == "darwin":
+        try:
+            nuevos = _descargar_icloud(de_fotos, aviso)
+        except Exception as e:
+            aviso(f"⚠ No se descargan originales de iCloud ({e}); se usan las previsualizaciones.")
+            nuevos = {}
+        if nuevos:
+            mapa.update(nuevos)
+            _guardar_mapa(mapa)
         for u, r in nuevos.items():
             out[u] = {"ruta": r, "origen": "icloud"}
     for f in fotos:
@@ -78,45 +96,58 @@ def resolver(fotos: list[dict], descargar: bool = True, aviso=print) -> dict[str
     return out
 
 
+def _exportar(uuid: str, destino: Path) -> str:
+    from osxphotos.photokit import PHOTOS_VERSION_CURRENT, PhotoLibrary
+
+    activo = PhotoLibrary().fetch_uuid(uuid)
+    rutas_ = activo.export(str(destino), version=PHOTOS_VERSION_CURRENT, overwrite=True)
+    if not rutas_ or not _es_imagen_valida(rutas_[0]):
+        raise RuntimeError("iCloud no devolvió la imagen")
+    return rutas_[0]
+
+
 def _descargar_icloud(fotos: list[dict], aviso) -> dict[str, str]:
-    disco.comprobar(MB_POR_FOTO * len(fotos), f"descargar {len(fotos)} fotos de iCloud", rutas.ORIGINALES)
+    from .icloud import _autorizar
+
     try:
-        import osxphotos
-        from osxphotos.photoexporter import ExportOptions, PhotoExporter
-    except Exception as e:  # pragma: no cover
-        aviso(f"  ! No puedo usar osxphotos para descargar: {e}")
+        _autorizar()  # espera la respuesta del aviso de permisos (la primera vez)
+    except Exception as e:
+        aviso(f"⚠ {e}")
         return {}
-    aviso(f"· Descargando {len(fotos)} fotos de iCloud (solo las elegidas)… la app Fotos puede abrirse sola.")
-    db = osxphotos.PhotosDB()
+    aviso(f"· Descargando de iCloud {len(fotos)} fotos elegidas (solo estas)…")
     resultado: dict[str, str] = {}
-    por_uuid = {p.uuid: p for p in db.photos(uuid=[f["uuid"] for f in fotos])}
-    for k, f in enumerate(fotos, 1):
-        p = por_uuid.get(f["uuid"])
-        if not p:
-            continue
-        destino = rutas.ORIGINALES / f["uuid"]
-        destino.mkdir(parents=True, exist_ok=True)
-        ruta = None
-        ultimo_error = None
-        for opciones in (
-            dict(download_missing=True, use_photokit=True, edited=bool(p.hasadjustments)),
-            dict(download_missing=True, use_photos_export=True, edited=bool(p.hasadjustments)),
-        ):
+    t0 = time.time()
+    seguidos = 0
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
+        for k, f in enumerate(fotos, 1):
+            nombre = f.get("nombre") or f["uuid"]
+            if not disco.cabe(2 * MB_POR_FOTO, rutas.ORIGINALES):
+                aviso(f"⚠ Poco espacio libre: dejo de descargar; las {len(fotos) - k + 1} restantes usan la previsualización.")
+                break
+            if time.time() - t0 > SEGUNDOS_TOTALES:
+                aviso("⚠ iCloud va muy lento: dejo de descargar; el resto usa la previsualización.")
+                break
+            destino = rutas.ORIGINALES / f["uuid"]
+            destino.mkdir(parents=True, exist_ok=True)
             try:
-                res = PhotoExporter(p).export(str(destino), options=ExportOptions(overwrite=True, **opciones))
-                hechos = [x for x in (res.exported or []) if _es_imagen_valida(x)]
-                if hechos:
-                    ruta = hechos[0]
-                    break
+                ruta = ex.submit(_exportar, f["uuid"], destino).result(timeout=SEGUNDOS_POR_FOTO)
+                resultado[f["uuid"]] = ruta
+                seguidos = 0
+                aviso(f"  {k}/{len(fotos)} ✓ {Path(ruta).name}")
+            except TiempoAgotado:
+                seguidos += 1
+                aviso(f"  {k}/{len(fotos)} ✗ {nombre}: iCloud no responde (se usará la previsualización)")
+                # el hilo atascado sigue en segundo plano; usamos uno nuevo para la siguiente
+                ex.shutdown(wait=False, cancel_futures=True)
+                ex = ThreadPoolExecutor(max_workers=1)
             except Exception as e:
-                ultimo_error = e
-                continue
-        if ruta:
-            resultado[f["uuid"]] = ruta
-            aviso(f"  {k}/{len(fotos)} ✓ {Path(ruta).name}")
-        else:
-            shutil.rmtree(destino, ignore_errors=True)
-            motivo = f": {ultimo_error}" if ultimo_error else ""
-            aviso(f"  {k}/{len(fotos)} ✗ no se pudo descargar {f.get('nombre') or f['uuid']}{motivo}"
-                  " (se usará la previsualización)")
+                seguidos += 1
+                shutil.rmtree(destino, ignore_errors=True)
+                aviso(f"  {k}/{len(fotos)} ✗ {nombre}: {e} (se usará la previsualización)")
+            if seguidos >= FALLOS_SEGUIDOS:
+                aviso("⚠ iCloud no está entregando las fotos (¿sin internet?): el resto usa la previsualización.")
+                break
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
     return resultado

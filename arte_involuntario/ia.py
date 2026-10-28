@@ -16,26 +16,48 @@ import urllib.request
 from . import imagenes, rutas
 
 URL_DEFECTO = "https://api.groq.com/openai/v1"
-MODELO_DEFECTO = "meta-llama/llama-4-scout-17b-16e-instruct"
-IMAGENES_POR_PETICION = 5
+# Único modelo con visión de Groq a finales de 2026: máximo 3 imágenes por petición y
+# 2.048 tokens por imagen sea cual sea su tamaño (por eso basta con 768 px).
+MODELO_DEFECTO = "qwen/qwen3.8-27b"
+IMAGENES_POR_PETICION = 3
+LADO_IMAGEN = 768
 NOTAS = rutas.DATOS / "ia_notas.json"
 
 
+def _ficheros_env() -> list:
+    return [f for f in (rutas.RAIZ / n for n in ("ia.env", "ia.env.txt", "ia.env.rtf", ".env")) if f.exists()]
+
+
 def _config() -> dict:
+    """Lee la clave de ia.env (o del entorno). Tolerante: acepta «export», comillas, espacios,
+    ficheros guardados por TextEdit (.txt o .rtf) y, en último caso, cualquier gsk_… del texto."""
     cfg = {"clave": None, "url": URL_DEFECTO, "modelo": MODELO_DEFECTO}
-    fichero = rutas.RAIZ / "ia.env"
-    valores = {}
-    if fichero.exists():
-        for ln in fichero.read_text(encoding="utf-8").splitlines():
-            ln = ln.strip()
-            if ln and not ln.startswith("#") and "=" in ln:
-                k, v = ln.split("=", 1)
-                valores[k.strip()] = v.strip().strip('"').strip("'")
+    valores: dict[str, str] = {}
+    sueltas: list[str] = []
+    for fichero in _ficheros_env():
+        try:
+            texto = fichero.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        for ln in texto.splitlines():
+            ln = ln.strip().removeprefix("export ").strip()
+            m = re.match(r"^([A-Z_]+)\s*=\s*(.+?)\s*\\?$", ln)
+            if m:
+                valores.setdefault(m.group(1), m.group(2).strip().strip('"').strip("'").strip())
+        sueltas += re.findall(r"gsk_[A-Za-z0-9]{20,}", texto)
     get = lambda *ks: next((valores.get(k) or os.environ.get(k) for k in ks if valores.get(k) or os.environ.get(k)), None)  # noqa: E731
-    cfg["clave"] = get("ARTE_IA_CLAVE", "GROQ_API_KEY")
+    cfg["clave"] = get("ARTE_IA_CLAVE", "GROQ_API_KEY") or (sueltas[0] if sueltas else None)
     cfg["url"] = (get("ARTE_IA_URL") or URL_DEFECTO).rstrip("/")
     cfg["modelo"] = get("ARTE_IA_MODELO") or MODELO_DEFECTO
     return cfg
+
+
+def problema() -> str | None:
+    """Si hay un ia.env pero no se ha encontrado ninguna clave, explica por qué."""
+    if _config()["clave"] or not _ficheros_env():
+        return None
+    return ("Hay un archivo ia.env pero no encuentro la clave. Créalo desde la Terminal, en la carpeta del "
+            "proyecto, con:  echo 'GROQ_API_KEY=gsk_TU_CLAVE' > ia.env   y vuelve a abrir la galería.")
 
 
 def disponible() -> dict | None:
@@ -66,13 +88,16 @@ def ajuste(nota: dict | None) -> float:
 
 
 def _pedir(cfg: dict, mensajes: list, max_tokens: int = 900, aviso=print) -> str:
-    cuerpo = json.dumps({
+    peticion = {
         "model": cfg["modelo"],
         "messages": mensajes,
         "temperature": 0.2,
         "max_completion_tokens": max_tokens,
         "response_format": {"type": "json_object"},
-    }).encode()
+    }
+    if "groq.com" in cfg["url"]:
+        peticion["reasoning_effort"] = "none"  # respuesta directa, sin «pensar» (más rápido y barato)
+    cuerpo = json.dumps(peticion).encode()
     for intento in range(6):
         req = urllib.request.Request(
             cfg["url"] + "/chat/completions", data=cuerpo, method="POST",
@@ -90,11 +115,18 @@ def _pedir(cfg: dict, mensajes: list, max_tokens: int = 900, aviso=print) -> str
                 aviso(f"  (límite de la API, espero {espera:.0f} s…)")
                 time.sleep(min(espera, 60))
                 continue
-            if e.code == 400 and "response_format" in txt and "response_format" in json.loads(cuerpo):
+            if e.code == 400 and intento < 5:
                 d = json.loads(cuerpo)
-                d.pop("response_format")
-                cuerpo = json.dumps(d).encode()
-                continue
+                quitado = False
+                for clave in ("reasoning_effort", "response_format"):
+                    if clave in txt and clave in d:
+                        d.pop(clave)
+                        quitado = True
+                if quitado:
+                    cuerpo = json.dumps(d).encode()
+                    continue
+            if e.code in (401, 403):
+                raise RuntimeError("La clave de la IA no es válida (revisa ia.env).") from e
             raise RuntimeError(f"La API respondió {e.code}: {txt}") from e
         except urllib.error.URLError as e:
             if intento < 3:
@@ -112,7 +144,7 @@ def _json_de(texto: str):
         return json.loads(m.group(0)) if m else {}
 
 
-def _imagen_b64(ruta: str, lado: int = 512) -> str:
+def _imagen_b64(ruta: str, lado: int = LADO_IMAGEN) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(imagenes.miniatura_jpeg(ruta, lado, 80)).decode()
 
 

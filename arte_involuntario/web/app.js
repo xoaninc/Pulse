@@ -44,6 +44,8 @@ async function api(ruta, opciones) {
 }
 const post = (ruta, cuerpo) => api(ruta, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo || {}) });
 const mini = (uuid, s = 360) => `/mini/${encodeURIComponent(uuid)}?s=${s}`;
+const num = (x, d = 1) => Number(x).toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d });
+let turno = 0;  // cada vista nueva invalida las respuestas lentas de la anterior (W7)
 
 function mesAnio(iso) {
   if (!iso) return "";
@@ -65,33 +67,70 @@ function toast(msg) {
   t.textContent = msg; t.style.display = "block";
   clearTimeout(toastT); toastT = setTimeout(() => (t.style.display = "none"), 2600);
 }
-let guardarT;
+let guardarT = null;
+async function guardarAhora() {
+  guardarT = null;
+  const r = await fetch("/api/seleccion", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(S.sel) });
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 409 && d.seleccion) {
+    // otra pestaña (u otra galería) cambió la selección después: manda la más reciente
+    toast("La selección se cambió en otra pestaña: cargo la versión más reciente.");
+    S.sel = normalizarSel(d.seleccion);
+    repintarTodo();
+    return;
+  }
+  if (!r.ok) throw new Error(d.error || `Error ${r.status}`);
+  S.sel._rev = d._rev;
+}
 function guardar() {
   clearTimeout(guardarT);
-  guardarT = setTimeout(() => post("/api/seleccion", S.sel).catch(e => toast("No se pudo guardar: " + e.message)), 350);
+  guardarT = setTimeout(() => guardarAhora().catch(e => toast("No se pudo guardar: " + e.message)), 350);
   contadores();
 }
+function normalizarSel(sel) {
+  sel.arte = sel.arte || [];
+  sel.paseo = Object.assign({ id: null, titulo: "", linea: "", fotos: [], mayusculas: true, dibujo: true, datos: true, diseno: "rejilla", k: 12 }, sel.paseo || {});
+  sel.opciones = Object.assign({ orden: "categoria", contraste: "normal", cabecera: true, sin_descargar: false }, sel.opciones || {});
+  sel.autor = sel.autor || "";
+  sel.borradores = sel.borradores || {};
+  return sel;
+}
+function repintarTodo() {
+  contadores();
+  if (S.lista.length) pintarRejilla();
+  if (S.paseo) pintarPaseo();
+  iniciarLaminas();
+}
+// el último cambio no se pierde al cerrar o recargar la pestaña (W14)
+addEventListener("pagehide", () => {
+  if (guardarT) { clearTimeout(guardarT); navigator.sendBeacon("/api/seleccion", new Blob([JSON.stringify(S.sel)], { type: "application/json" })); }
+});
+// al volver a esta pestaña, traer la selección por si se cambió en otra
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible" || guardarT || !S.sel) return;
+  const d = await api("/api/seleccion").catch(() => null);
+  if (d && (d._rev || 0) > (S.sel._rev || 0)) { S.sel = normalizarSel(d); repintarTodo(); }
+});
 
 // ------------------------------------------------------------------ arranque
 async function iniciar() {
   S.estado = await api("/api/estado");
   S.cats = S.estado.categorias;
   S.cats.forEach(c => (S.nombres[c.id] = c.nombre));
-  S.sel = await api("/api/seleccion");
-  S.sel.arte = S.sel.arte || [];
-  S.sel.paseo = Object.assign({ id: null, titulo: "", linea: "", fotos: [], mayusculas: true, dibujo: true, datos: true, diseno: "rejilla", k: 12 }, S.sel.paseo || {});
-  S.sel.opciones = Object.assign({ orden: "categoria", contraste: "normal", cabecera: true }, S.sel.opciones || {});
-  S.sel.autor = S.sel.autor || "";
+  S.sel = normalizarSel(await api("/api/seleccion"));
   const est = S.estado.estadisticas || {};
   $("#estado-global").innerHTML = `${S.estado.fotos.toLocaleString("es-ES")} fotos analizadas · modelo ${S.estado.modelo.nombre}` +
     (est.sin_imagen_local ? ` · ${est.sin_imagen_local} solo en iCloud` : "") +
     (S.estado.ia ? ` · IA: ${S.estado.ia.modelo.split("/").pop()}` : "");
+  if (S.estado.ia_problema) setTimeout(() => toast(S.estado.ia_problema), 1200);
   $$("nav button").forEach(b => b.addEventListener("click", () => cambiarTab(b.dataset.tab)));
   $("#btn-buscar").onclick = () => buscar($("#busqueda").value.trim());
   $("#busqueda").addEventListener("keydown", e => { if (e.key === "Enter") buscar(e.target.value.trim()); });
   $("#btn-mas").onclick = () => cargarMas();
-  $("#modal-cerrar").onclick = cerrarModal;
-  $("#modal").addEventListener("click", e => { if (e.target.id === "modal") cerrarModal(); });
+  $("#modal-cerrar").onclick = () => cerrarModal();
+  let inicioClic = null;
+  $("#modal").addEventListener("pointerdown", e => (inicioClic = e.target));
+  $("#modal").addEventListener("click", e => { if (e.target.id === "modal" && inicioClic && inicioClic.id === "modal") cerrarModal(); });
   document.addEventListener("keydown", teclas);
   if (S.estado.ia) { $("#btn-ia-cat").classList.remove("oculto"); $("#btn-ia-cat").onclick = revisarIA; }
   pintarCategorias();
@@ -135,16 +174,23 @@ function pintarCategorias() {
     h("div", {}, h("div", { class: "nombre" }, "★ Lo más «Clément»"), h("div", { class: "info" }, "las mejores de todas las categorías"))));
 }
 
+function recortar(t, n) {
+  if (!t || t.length <= n) return t;
+  const corte = t.lastIndexOf(" ", n - 1);
+  return t.slice(0, corte > n / 2 ? corte : n).replace(/[,;:.]$/, "") + "…";
+}
+
 async function elegirCategoria(id) {
-  S.vista = "cat"; S.catActiva = id; S.desde = 0; S.lista = [];
+  turno++; cargando = false;
+  S.vista = "cat"; S.catActiva = id; S.desde = 0; S.lista = []; S.catChip = null;
   const c = S.cats.find(x => x.id === id);
   $("#cab-categoria").innerHTML = "";
   $("#cab-categoria").append(
     h("h2", {}, c.nombre),
     c.definicion && c.definicion.length > 420
-      ? h("details", { class: "def" }, h("summary", {}, `«${c.definicion.slice(0, 300).replace(/\s+\S*$/, "")}…»`), c.definicion)
+      ? h("details", { class: "def" }, h("summary", {}, `«${recortar(c.definicion, 300)}»`), c.definicion)
       : h("div", { class: "def" }, c.definicion ? `«${c.definicion}»` : ""),
-    h("p", { class: "ayuda" }, c.descripcion || ""),
+    h("p", { class: "ayuda" }, recortar(c.descripcion || "", 260)),
     c.consejos && c.consejos.length ? h("details", {}, h("summary", {}, "Qué buscar"), h("ul", {}, c.consejos.map(x => h("li", {}, x)))) : "");
   pintarSugerencias(c);
   pintarCategorias();
@@ -156,19 +202,26 @@ function pintarSugerencias(c) {
   cont.innerHTML = "";
   cont.classList.remove("abiertas");
   if (!c) return;
-  cont.append(h("span", { class: "ayuda", style: "margin:3px 4px 0 0" }, "Buscar solo:"));
+  const total = (c.busquedas || []).length;
+  cont.append(h("span", { class: "ayuda", style: "margin:3px 4px 0 0" }, "Buscar solo:"),
+    h("button", { class: "chip ver", onclick: e => { cont.classList.toggle("abiertas"); e.target.textContent = cont.classList.contains("abiertas") ? "menos" : `ver las ${total}`; } }, `ver las ${total}`));
   (c.busquedas || []).forEach(q => cont.append(h("button", { class: "chip" + (S.consulta === q && S.vista === "buscar" ? " activa" : ""), onclick: () => buscar(q, true) }, q.replace(/^a photo of /i, ""))));
-  cont.append(h("button", { class: "chip ver", onclick: () => cont.classList.toggle("abiertas") }, "más…"));
 }
 
+let cargando = false;
 async function cargarMas() {
-  const n = 60;
+  if (cargando) return;
+  cargando = true;
+  $("#btn-mas").disabled = true;
+  const n = 60, mio = turno, desde = S.desde;
+  S.desde += n;
   let nuevos = [];
   try {
-    if (S.vista === "cat") nuevos = await api(`/api/candidatas?cat=${S.catActiva}&desde=${S.desde}&n=${n}`);
-    else if (S.vista === "general" && S.desde === 0) nuevos = await api(`/api/general?n=180`);
+    if (S.vista === "cat") nuevos = await api(`/api/candidatas?cat=${S.catActiva}&desde=${desde}&n=${n}`);
+    else if (S.vista === "general" && desde === 0) nuevos = await api(`/api/general?n=180`);
   } catch (e) { toast(e.message); }
-  S.desde += n;
+  finally { cargando = false; $("#btn-mas").disabled = false; }
+  if (mio !== turno) return;
   S.lista = S.lista.concat(nuevos);
   $("#btn-mas").classList.toggle("oculto", !(S.vista === "cat" && nuevos.length === n));
   pintarRejilla();
@@ -176,20 +229,27 @@ async function cargarMas() {
 
 async function buscar(q, desdeChip) {
   if (!q) return;
+  const mio = ++turno;
+  // desde un chip de una categoría, lo que se añada va a ESA categoría (W8)
+  S.catChip = desdeChip ? S.catActiva : null;
   S.vista = "buscar"; S.consulta = q; S.lista = [];
-  $("#titulo-rejilla").textContent = "Buscando…";
+  $("#titulo-rejilla").textContent = "Buscando… (la primera búsqueda tarda unos segundos mientras se carga el modelo)";
   $("#rejilla").innerHTML = "";
   if (!desdeChip) pintarSugerencias(null);
   else pintarSugerencias(S.cats.find(x => x.id === S.catActiva));
   try {
-    S.lista = await api(`/api/buscar?q=${encodeURIComponent(q)}&n=120`);
+    const r = await api(`/api/buscar?q=${encodeURIComponent(q)}&n=120`);
+    if (mio !== turno) return;
+    S.lista = r.fotos;
+    S.consultaReal = r.consulta !== q ? r.consulta : "";
   } catch (e) { toast(e.message); }
   $("#btn-mas").classList.add("oculto");
   pintarRejilla();
 }
 
 async function verGeneral() {
-  S.vista = "general"; S.desde = 0; S.lista = [];
+  turno++; cargando = false;
+  S.vista = "general"; S.desde = 0; S.lista = []; S.catChip = null;
   $("#cab-categoria").innerHTML = "<h2>★ Lo más «Clément» de tu fototeca</h2><p class='ayuda'>Las fotos que mejor encajan en alguna categoría. Debajo de cada una, la categoría sugerida (puedes cambiarla).</p>";
   pintarSugerencias(null);
   pintarCategorias();
@@ -199,11 +259,14 @@ async function verGeneral() {
 async function verSimilares(uuid) {
   cerrarModal();
   cambiarTab("arte");
-  S.vista = "similares"; S.lista = [];
+  const mio = ++turno;
+  S.vista = "similares"; S.lista = []; S.catChip = null;
   $("#cab-categoria").innerHTML = "";
   $("#cab-categoria").append(h("h2", {}, "Fotos parecidas a esta"), h("img", { src: mini(uuid, 200), style: "height:90px;border-radius:8px" }));
   pintarSugerencias(null);
-  S.lista = await api(`/api/similares?uuid=${encodeURIComponent(uuid)}&n=90`);
+  const lista = await api(`/api/similares?uuid=${encodeURIComponent(uuid)}&n=90`);
+  if (mio !== turno) return;
+  S.lista = lista;
   $("#btn-mas").classList.add("oculto");
   pintarRejilla();
 }
@@ -234,7 +297,7 @@ function refrescar(uuid) {
 function pintarRejilla() {
   const cont = $("#rejilla");
   cont.innerHTML = "";
-  const tit = { cat: `Candidatas para ${S.nombres[S.catActiva] || ""}, de más a menos probable`, buscar: `Resultados para «${S.consulta}»`, general: "", similares: "" }[S.vista];
+  const tit = { cat: `Candidatas para ${S.nombres[S.catActiva] || ""}, de más a menos probable`, buscar: `Resultados para «${S.consulta}»` + (S.consultaReal ? ` (buscado como «${S.consultaReal}»)` : ""), general: "", similares: "" }[S.vista];
   $("#titulo-rejilla").textContent = S.lista.length ? tit : "";
   if (!S.lista.length) { cont.append(h("div", { class: "vacio" }, "No hay fotos que mostrar.")); return; }
   S.lista.forEach((d, i) => cont.append(tarjetaArte(d, i)));
@@ -242,7 +305,7 @@ function pintarRejilla() {
 
 function tarjetaArte(d, i) {
   const sel = seleccionadaArte(d.uuid);
-  const catVista = S.vista === "cat" ? S.catActiva : null;
+  const catVista = S.vista === "cat" ? S.catActiva : (S.vista === "buscar" && S.catChip) || null;
   const t = h("div", { class: "tarjeta" + (sel ? " elegida" : ""), "data-uuid": d.uuid });
   const img = h("div", { class: "img", style: `background-image:url('${mini(d.uuid)}')`, title: "Ver grande", onclick: () => abrirVisor(S.lista, i) });
   t.append(img);
@@ -297,11 +360,19 @@ function ordenArte() {
 
 // ------------------------------------------------------------------ visor / editor
 function abrirModal(contenido) {
+  modalSucio = false;
+  if (alCerrarModal) { alCerrarModal(); alCerrarModal = null; }
   $("#modal-cuerpo").innerHTML = "";
   $("#modal-cuerpo").append(contenido);
   $("#modal").classList.remove("oculto");
 }
-function cerrarModal() { $("#modal").classList.add("oculto"); S.modalPos = -1; }
+let alCerrarModal = null;   // limpieza del editor abierto
+let modalSucio = false;      // hay cambios sin guardar en el editor
+function cerrarModal(forzar) {
+  if (modalSucio && forzar !== true && !confirm("¿Cerrar sin guardar el recorte y el texto?")) return;
+  $("#modal").classList.add("oculto"); S.modalPos = -1; modalSucio = false;
+  if (alCerrarModal) { alCerrarModal(); alCerrarModal = null; }
+}
 function teclas(e) {
   if ($("#modal").classList.contains("oculto")) return;
   if (e.key === "Escape") cerrarModal();
@@ -316,7 +387,7 @@ async function abrirVisor(lista, i) {
   const d = lista[i];
   const meta = await api(`/api/foto?uuid=${encodeURIComponent(d.uuid)}`).catch(() => ({}));
   const sel = seleccionadaArte(d.uuid);
-  const s = h("select", {}, S.cats.map(c => h("option", { value: c.id, selected: (sel ? sel.categoria : (S.vista === "cat" ? S.catActiva : d.sugerida)) === c.id }, c.nombre)));
+  const s = h("select", {}, S.cats.map(c => h("option", { value: c.id, selected: (sel ? sel.categoria : (S.vista === "cat" ? S.catActiva : (S.catChip || d.sugerida))) === c.id }, c.nombre)));
   const panel = h("div", { class: "panel" },
     h("div", { class: "meta" }, h("b", {}, meta.nombre || ""), h("br"), [fechaCorta(meta.fecha), meta.lugar || meta.lugar_corto].filter(Boolean).join(" · ")),
     meta.en_icloud ? h("div", { class: "meta" }, "☁ Original en iCloud (aquí ves la previsualización local). Si la eliges se descargará solo esta.") : "",
@@ -348,14 +419,15 @@ function editorRecorte({ uuid, recorte, bn, extra, alGuardar }) {
     Object.assign(marco.style, { left: x + "px", top: y + "px", width: lado + "px", height: lado + "px" });
   }
   img.onload = colocar;
-  window.addEventListener("resize", colocar);
-  zoom.oninput = () => { r.zoom = parseFloat(zoom.value); colocar(); };
+  const ac = new AbortController();
+  window.addEventListener("resize", colocar, { signal: ac.signal });
+  zoom.oninput = () => { r.zoom = parseFloat(zoom.value); colocar(); modalSucio = true; };
   let arrastrando = false;
   const mover = e => {
     const b = img.getBoundingClientRect();
     r.cx = (e.clientX - b.left) / b.width; r.cy = (e.clientY - b.top) / b.height; colocar();
   };
-  lienzo.addEventListener("pointerdown", e => { arrastrando = true; lienzo.setPointerCapture(e.pointerId); mover(e); });
+  lienzo.addEventListener("pointerdown", e => { arrastrando = true; modalSucio = true; lienzo.setPointerCapture(e.pointerId); mover(e); });
   lienzo.addEventListener("pointermove", e => { if (arrastrando) mover(e); });
   lienzo.addEventListener("pointerup", () => (arrastrando = false));
   const panel = h("div", { class: "panel" },
@@ -363,9 +435,11 @@ function editorRecorte({ uuid, recorte, bn, extra, alGuardar }) {
     h("label", {}, "Zoom", zoom),
     h("button", { class: "sec", onclick: () => { r.cx = 0.5; r.cy = 0.5; r.zoom = 1; zoom.value = 1; colocar(); } }, "Centrar"),
     extra || "",
-    h("button", { onclick: () => { alGuardar(r); cerrarModal(); } }, "Guardar"));
+    h("button", { onclick: () => { alGuardar(r); cerrarModal(true); } }, "Guardar"));
+  panel.addEventListener("input", () => (modalSucio = true));
   S.modalPos = -1;
   abrirModal(h("div", { class: "visor" }, h("div", {}, lienzo), panel));
+  alCerrarModal = () => ac.abort();
 }
 
 function editarArte(uuid) {
@@ -376,7 +450,7 @@ function editarArte(uuid) {
   const extra = h("div", { class: "panel" },
     h("label", {}, "Categoría", s),
     h("label", {}, "Pie (lugar, fecha o lo que quieras; como en el libro: «Arrozal en Suzhou, lago Tai (China)»)", pie),
-    h("button", { class: "sec", onclick: () => { quitarArte(uuid); cerrarModal(); refrescar(uuid); } }, "Quitar de la selección"));
+    h("button", { class: "sec", onclick: () => { quitarArte(uuid); cerrarModal(true); refrescar(uuid); } }, "Quitar de la selección"));
   editorRecorte({
     uuid, recorte: a.recorte, bn: false, extra,
     alGuardar: r => { a.recorte = r; a.categoria = s.value; a.pie = pie.value.trim(); guardar(); refrescar(uuid); },
@@ -387,9 +461,12 @@ function editarArte(uuid) {
 async function revisarIA() {
   const cat = S.catActiva;
   if (S.vista !== "cat") { toast("Abre una categoría primero"); return; }
-  await post("/api/ia/revisar", { categorias: [cat], n: 30 });
+  await post("/api/ia/revisar", { categorias: [cat], n: 12 });
   toast("Revisando con IA… (unos segundos)");
-  esperarIA(() => elegirCategoria(cat));
+  esperarIA(() => {
+    if (S.vista === "cat" && S.catActiva === cat) elegirCategoria(cat);
+    else toast(`IA: revisión de ${S.nombres[cat]} lista`);
+  });
 }
 function esperarIA(alAcabar) {
   const t = setInterval(async () => {
@@ -405,16 +482,26 @@ async function cargarPaseos() {
   cont.innerHTML = "<p class='ayuda'>Buscando caminatas…</p>";
   S.paseos = await api("/api/paseos");
   pintarPaseos();
+  const rango = S.sel.paseo.rango || {};
+  $("#rango-desde").value = rango.desde || "";
+  $("#rango-hasta").value = rango.hasta || "";
   $("#btn-rango").onclick = async () => {
     const d = $("#rango-desde").value, a = $("#rango-hasta").value;
     if (!d || !a) return toast("Pon las dos fechas");
     try {
       const p = await post("/api/paseo_rango", { desde: d, hasta: a });
       S.paseos = S.paseos.filter(x => x.id !== p.id).concat([p]);
+      S.sel.paseo.rango = { desde: d, hasta: a };
       pintarPaseos(); abrirPaseo(p.id);
     } catch (e) { toast(e.message); }
   };
-  if (S.sel.paseo.id && S.paseos.find(p => p.id === S.sel.paseo.id)) abrirPaseo(S.sel.paseo.id);
+  const id = S.sel.paseo.id;
+  if (id && !S.paseos.find(p => p.id === id) && id.startsWith("r")) {
+    // caminata elegida a mano en otra sesión: el servidor la reconstruye por su id
+    const r = await api(`/api/paseo?id=${encodeURIComponent(id)}&k=${S.sel.paseo.k || 12}`).catch(() => null);
+    if (r) { S.paseos.push(r.paseo); pintarPaseos(); }
+  }
+  if (id && S.paseos.find(p => p.id === id)) abrirPaseo(id);
 }
 
 function pintarPaseos() {
@@ -425,32 +512,62 @@ function pintarPaseos() {
     cont.append(h("button", { class: "paseo-item" + (S.paseo && S.paseo.paseo.id === p.id ? " activa" : ""), onclick: () => abrirPaseo(p.id) },
       h("div", { class: "tira" }, p.portada.slice(0, 4).map(u => h("div", { style: `background-image:url('${mini(u, 120)}')` }))),
       h("div", { class: "datos" }, h("b", {}, fechaCorta(p.inicio)), h("br"),
-        `${p.lugar || "sin lugar"} · ${p.fotos} fotos (${p.naturales} de paisaje)` + (p.km ? ` · ${p.km} km` : "") + (p.horas ? ` · ${p.horas} h` : ""))));
+        `${p.lugar || "sin lugar"} · ${p.fotos} fotos (${p.naturales} de paisaje)` + (p.km ? ` · ${num(p.km)} km` : "") + (p.horas ? ` · ${num(p.horas)} h` : ""))));
   }
 }
 
-async function abrirPaseo(id) {
-  $("#cab-paseo").innerHTML = "<p class='ayuda'>Cargando…</p>";
-  const r = await api(`/api/paseo?id=${encodeURIComponent(id)}&k=${S.sel.paseo.k || 12}`);
-  S.paseo = r;
+const copia = x => JSON.parse(JSON.stringify(x));
+
+// modo: "abrir" (por defecto), "k" (otro número de fotos: conserva lo escrito) o "reiniciar"
+async function abrirPaseo(id, modo = "abrir", k = null) {
   const P = S.sel.paseo;
+  if (P.id && P.id !== id && P.fotos.length) {
+    // guardar el borrador de la caminata que se deja (frases, recortes, título…)
+    S.sel.borradores[P.id] = copia({ titulo: P.titulo, linea: P.linea, fotos: P.fotos, k: P.k, rango: P.rango });
+  }
+  const borrador = P.id !== id ? S.sel.borradores[id] : null;
+  k = k || (P.id === id ? P.k : borrador && borrador.k) || 12;
+  $("#cab-paseo").innerHTML = "<p class='ayuda'>Cargando…</p>";
+  let r;
+  try { r = await api(`/api/paseo?id=${encodeURIComponent(id)}&k=${k}`); }
+  catch (e) { $("#cab-paseo").innerHTML = ""; toast(e.message); return; }
+  S.paseo = r;
+  const fichas = Object.fromEntries(r.todas.map(f => [f.uuid, f]));
+  const propuesta = () => r.sugeridas.map(u => nuevaFotoPaseo(fichas[u]));
   if (P.id !== id) {
-    const fichas = Object.fromEntries(r.todas.map(f => [f.uuid, f]));
     P.id = id;
-    P.fotos = r.sugeridas.map(u => nuevaFotoPaseo(fichas[u]));
-    P.titulo = (r.titulos && r.titulos[0]) || "";
-    P.linea = r.linea || "";
+    if (borrador) Object.assign(P, copia(borrador));
+    else {
+      P.fotos = propuesta();
+      P.titulo = (r.titulos && r.titulos[0]) || "";
+      P.linea = r.linea || "";
+    }
+    P.k = k;
+    guardar();
+  } else if (modo === "k") {
+    const viejas = Object.fromEntries(P.fotos.map(f => [f.uuid, f]));
+    P.fotos = r.sugeridas.map(u => viejas[u] || nuevaFotoPaseo(fichas[u]));
+    P.k = k;
+    guardar();
+  } else if (modo === "reiniciar") {
+    P.fotos = propuesta();
+    P.k = k;
     guardar();
   }
   pintarPaseos();
   pintarPaseo();
 }
 
+function fraseEditada(f) {
+  const fi = fichaPaseo(f.uuid) || {};
+  return (f.frase || "").trim() && (f.frase || "").trim() !== (fi.frase || "").trim();
+}
+
 function nuevaFotoPaseo(f) {
   return { uuid: f.uuid, frase: f.frase, recorte: { cx: 0.5, cy: 0.5, zoom: 1 }, km: f.km, alt: f.alt, hora: f.hora };
 }
 function datosFoto(f) {
-  return [f.hora, f.km != null ? `km ${f.km.toFixed(1).replace(".", ",")}` : "", f.alt != null ? `${Math.round(f.alt)} m` : ""].filter(Boolean).join(" · ");
+  return [f.hora, f.km != null ? `km ${num(f.km)}` : "", f.alt != null ? `${Math.round(f.alt).toLocaleString("es-ES")} m` : ""].filter(Boolean).join(" · ");
 }
 function fichaPaseo(uuid) { return S.paseo.todas.find(f => f.uuid === uuid); }
 function ordenarPaseo() {
@@ -464,12 +581,15 @@ function pintarPaseo() {
   $("#cab-paseo").innerHTML = "";
   $("#cab-paseo").append(
     h("h2", {}, `${fechaCorta(p.inicio)} · ${p.lugar || "Caminata"}`),
-    h("p", { class: "ayuda" }, `${p.fotos} fotos · ${p.horas} h` + (p.km ? ` · ${p.km} km` : "") +
+    h("p", { class: "ayuda" }, `${p.fotos} fotos · ${num(p.horas)} h` + (p.km ? ` · ${num(p.km)} km` : "") +
       ". Haz clic en las fotos para añadirlas o quitarlas (mínimo 12). La primera será el ORIGEN y la última el FINAL. Las grises tenues son selfies/capturas."),
     h("div", { class: "form-fila" },
-      h("button", { class: "sec", onclick: () => { P.id = null; abrirPaseo(p.id); } }, "↺ Volver a la propuesta automática"),
+      h("button", { class: "sec", onclick: () => {
+        if (P.fotos.some(fraseEditada) && !confirm("Se sustituirán las fotos elegidas y sus frases por la propuesta automática. ¿Seguir?")) return;
+        abrirPaseo(p.id, "reiniciar", P.k || 12);
+      } }, "↺ Volver a la propuesta automática"),
       h("label", { style: "flex-direction:row;align-items:center;gap:6px" }, "Proponer",
-        h("select", { onchange: e => { P.k = parseInt(e.target.value, 10); P.id = null; guardar(); abrirPaseo(p.id); } },
+        h("select", { onchange: e => abrirPaseo(p.id, "k", parseInt(e.target.value, 10)) },
           [12, 14, 16].map(k => h("option", { value: k, selected: (P.k || 12) === k }, `${k} fotos`)))),
       h("span", { class: "ayuda" }, `Elegidas: ${P.fotos.length}` + (P.fotos.length < MIN_PASEO ? ` (faltan ${MIN_PASEO - P.fotos.length})` : " ✓"))));
   const grid = $("#paseo-fotos");
@@ -480,7 +600,7 @@ function pintarPaseo() {
     const t = h("div", { class: "tarjeta" + (k >= 0 ? " elegida" : "") + (f.util ? "" : " no-util") },
       h("div", { class: "img", style: `background-image:url('${mini(f.uuid)}')`, onclick: () => alternarPaseo(f) }),
       k >= 0 ? h("span", { class: "num-sel" }, k === 0 ? "ORIGEN" : (k === elegidas.length - 1 ? "FINAL" : String(k + 1).padStart(2, "0"))) : "",
-      h("div", { class: "pie" }, h("div", {}, [f.hora, f.km != null ? `km ${f.km.toFixed(1)}` : "", f.suceso ? f.suceso.palabra.toLowerCase() : ""].filter(Boolean).join(" · "))));
+      h("div", { class: "pie" }, h("div", {}, [f.hora, f.km != null ? `km ${num(f.km)}` : "", f.suceso ? f.suceso.palabra.toLowerCase() : ""].filter(Boolean).join(" · "))));
     grid.append(t);
   });
   pintarEditorPaseo();
@@ -519,9 +639,11 @@ function pintarEditorPaseo() {
       const marca = k === 0 ? "ORIGEN" : (k === P.fotos.length - 1 ? "FINAL" : String(k + 1).padStart(2, "0"));
       return h("div", { class: "frase" },
         h("div", { class: "mini", style: `background-image:url('${mini(f.uuid, 160)}')`, title: "Recortar", onclick: () => editorRecorte({ uuid: f.uuid, recorte: f.recorte, bn: true, alGuardar: rr => { f.recorte = rr; guardar(); } }) }),
-        h("div", {}, h("div", { class: "marca" }, marca, h("span", { class: "ayuda", style: "font-weight:400;letter-spacing:0;margin-left:6px" }, datosFoto(Object.assign({}, fi, f)))),
-          h("textarea", { rows: 2, oninput: e => { f.frase = e.target.value; guardar(); } }, f.frase || ""),
-          fi.suceso ? h("div", { class: "ayuda", style: "margin:2px 0 0" }, `sugerencia: ${fi.suceso.frase}`) : ""));
+        h("div", {}, h("div", { class: "marca-frase" }, marca, h("span", {}, datosFoto(Object.assign({}, fi, f)))),
+          h("textarea", { rows: 2, maxlength: 160, placeholder: "¿Qué pasó en este momento?", oninput: e => { f.frase = e.target.value; guardar(); } }, f.frase || ""),
+          f.sugerencia_ia ? h("div", { class: "ayuda", style: "margin:2px 0 0" }, `IA: ${f.sugerencia_ia} `,
+            h("button", { class: "chip", onclick: () => { f.frase = f.sugerencia_ia; delete f.sugerencia_ia; guardar(); pintarEditorPaseo(); } }, "usar")) :
+            (fi.suceso && fi.suceso.frase !== f.frase ? h("div", { class: "ayuda", style: "margin:2px 0 0" }, `sugerencia: ${fi.suceso.frase}`) : "")));
     }))));
 }
 
@@ -533,7 +655,9 @@ async function frasesIA() {
     const res = d.resultado || {};
     P.fotos.forEach(f => {
       const x = res[f.uuid];
-      if (x && x.frase) f.frase = x.frase;
+      if (!x || !x.frase) return;
+      if (!fraseEditada(f)) f.frase = x.frase;   // vacía o todavía la sugerencia automática
+      else f.sugerencia_ia = x.frase;           // escrita a mano: se ofrece, no se sustituye
     });
     const pal = Object.values(res).map(x => x.palabra).filter(Boolean);
     if (pal.length) S.paseo.titulos = [...new Set(pal.concat(S.paseo.titulos || []))].slice(0, 10);
@@ -549,6 +673,7 @@ function iniciarLaminas() {
   $("#orden").value = o.orden; $("#orden").onchange = e => { o.orden = e.target.value; guardar(); };
   $("#contraste").value = o.contraste; $("#contraste").onchange = e => { o.contraste = e.target.value; guardar(); };
   $("#cabecera").checked = o.cabecera !== false; $("#cabecera").onchange = e => { o.cabecera = e.target.checked; guardar(); };
+  $("#sin-descargar").checked = !!o.sin_descargar; $("#sin-descargar").onchange = e => { o.sin_descargar = e.target.checked; guardar(); };
   $("#btn-generar").onclick = generarLaminas;
 }
 

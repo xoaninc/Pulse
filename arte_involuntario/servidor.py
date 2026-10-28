@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import mimetypes
 import subprocess
 import sys
@@ -14,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import disco, generar, ia, imagenes, indice, rutas
+from . import disco, generar, ia, imagenes, indice, rutas, traduccion
 from .modelo import Modelo, clave_modelo, resolver_preset
 from .paseos import Paseos, linea_paseo
 from .puntuar import Puntuador
@@ -63,7 +64,9 @@ class App:
         print("· Cargando índice…")
         self.ix = indice.Indice(self.clave)
         if not len(self.ix):
-            raise SystemExit("No hay fotos analizadas con este modelo. Ejecuta antes: ./arte analizar")
+            otros = [m for m, n in indice.estadisticas()["analizadas"].items() if n]
+            extra = f" (hay fotos analizadas con {', '.join(otros)}: usa ./arte galeria --modelo …)" if otros else ""
+            raise RuntimeError(f"No hay fotos analizadas con el modelo «{preset}». Ejecuta antes: ./arte analizar{extra}")
         self._modelo: Modelo | None = None
         self._modelo_lock = threading.Lock()
         self.tx = cargar_textos(self.clave, self.modelo)
@@ -126,6 +129,7 @@ class App:
             "plantillas": cfg.get("paseo", {}).get("plantillas_frase", []),
             "disco": disco.resumen(),
             "ia": ia.disponible(),
+            "ia_problema": ia.problema(),
             "ia_notas": len(self.ia_notas),
         }
 
@@ -143,14 +147,15 @@ class App:
             out.append(d)
         return out
 
-    def buscar_texto(self, q: str, n: int) -> list[dict]:
+    def buscar_texto(self, q: str, n: int) -> dict:
         # ¿es una de las frases de las categorías? entonces su vector ya está calculado
         for c in self.tx.cfg["categorias"]:
             if q in c["prompts"]:
                 v = self.tx[f"cat:{c['id']}"][c["prompts"].index(q)]
-                return self.pt.buscar_vector(v, n)
-        v = self.modelo().vectores_texto([q])[0]
-        return self.pt.buscar_vector(v, n)
+                return {"consulta": q, "fotos": self.pt.buscar_vector(v, n)}
+        q_en = traduccion.a_ingles(q)
+        v = self.modelo().vectores_texto([q_en])[0]
+        return {"consulta": q_en, "fotos": self.pt.buscar_vector(v, n)}
 
     def similares(self, uuid: str, n: int) -> list[dict]:
         i = self.ix.pos.get(uuid)
@@ -159,11 +164,15 @@ class App:
         return self.pt.buscar_vector(self.ix.E[i], n, excluir_uuid=uuid)
 
     def paseo(self, pid: str, k: int) -> dict | None:
+        p = self.pa.por_id(pid)
+        if not p:
+            return None
+        self.pa.completar_altitudes([self.ix.uuids[i] for i in p["_idx"]])
         r = self.pa.sugerir(pid, k)
         if not r:
             return None
+        self.pa.variar_sucesos(r["todas"], r["sugeridas"])
         todas = {f["uuid"]: f for f in r["todas"]}
-        self.pa.completar_altitudes([f["uuid"] for f in r["todas"]])
         sug = [todas[u] for u in r["sugeridas"] if u in todas]
         r["linea"] = linea_paseo(sug, r["paseo"]["inicio"])
         palabras = [f["suceso"]["palabra"] for f in sug if f.get("suceso")]
@@ -171,8 +180,19 @@ class App:
         return r
 
 
+def _limpio(x):
+    """JSON válido para el navegador: sin NaN ni infinitos."""
+    if isinstance(x, float):
+        return x if math.isfinite(x) else None
+    if isinstance(x, dict):
+        return {k: _limpio(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_limpio(v) for v in x]
+    return x
+
+
 def _json(h: BaseHTTPRequestHandler, datos, codigo=200):
-    cuerpo = json.dumps(datos, ensure_ascii=False, default=str).encode()
+    cuerpo = json.dumps(_limpio(datos), ensure_ascii=False, default=str, allow_nan=False).encode()
     h.send_response(codigo)
     h.send_header("Content-Type", "application/json; charset=utf-8")
     h.send_header("Content-Length", str(len(cuerpo)))
@@ -270,16 +290,25 @@ def crear_handler(app: App):
         def _post(self, b: dict):
             p = urlparse(self.path).path
             if p == "/api/seleccion":
-                generar.guardar_seleccion(b)
-                return _json(self, {"ok": True})
+                rev = b.pop("_rev", None)
+                try:
+                    nueva = generar.guardar_seleccion(b, rev)
+                except generar.Conflicto:
+                    return _json(self, {"error": "conflicto", "seleccion": generar.leer_seleccion()}, 409)
+                return _json(self, {"ok": True, "_rev": nueva})
             if p == "/api/paseo_rango":
                 d0 = datetime.fromisoformat(b["desde"]).astimezone().timestamp()
                 d1 = datetime.fromisoformat(b["hasta"]).astimezone().timestamp()
                 r = app.pa.por_rango(d0, d1)
                 return _json(self, app.pa.publico(r) if r else {"error": "No hay fotos en ese intervalo"})
             if p == "/api/generar":
-                sel = b or generar.leer_seleccion()
-                generar.guardar_seleccion(sel)
+                if b:
+                    rev = b.pop("_rev", None)
+                    try:
+                        generar.guardar_seleccion(b, rev)
+                    except generar.Conflicto:
+                        return _json(self, {"error": "conflicto", "seleccion": generar.leer_seleccion()}, 409)
+                sel = generar.leer_seleccion()
                 ok = app.trabajo_generar.lanzar(lambda aviso: generar.generar(sel, aviso=aviso))
                 return _json(self, {"ok": ok})
             if p == "/api/ia/revisar":
@@ -311,8 +340,24 @@ def crear_handler(app: App):
     return H
 
 
+def _ya_abierta(puerto: int) -> bool:
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{puerto}/api/estado", timeout=1.5) as r:
+            return r.status == 200 and b"categorias" in r.read(4000)
+    except Exception:
+        return False
+
+
 def servir(preset: str, puerto: int = 8765, abrir: bool = True):
     rutas.preparar()
+    if _ya_abierta(puerto):
+        url = f"http://127.0.0.1:{puerto}/"
+        print(f"La galería ya está abierta en {url} (en otra ventana de Terminal). La abro en el navegador.")
+        if abrir:
+            webbrowser.open(url)
+        return
     app = App(preset)
     app.precargar_modelo()
     for intento in range(10):
