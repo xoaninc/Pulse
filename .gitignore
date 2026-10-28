@@ -1,0 +1,8 @@
+.venv/
+.python/
+datos/
+salida/
+ia.env
+__pycache__/
+*.pyc
+.DS_Store

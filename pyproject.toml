@@ -1,0 +1,9 @@
+[project]
+name = "arte-involuntario"
+version = "1.0.0"
+description = "Busca en tu fototeca arte involuntario (Gilles Clément) y paseos (Hamish Fulton) y monta las láminas A3."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arte involuntario · Paseo</title>
+<link rel="stylesheet" href="/web/estilo.css">
+</head>
+<body>
+<header>
+  <div class="marca">
+    <b>Ejercicio 2.3</b>
+    <span>Arte involuntario · Paseo fotográfico</span>
+  </div>
+  <nav>
+    <button data-tab="arte" class="activa">1 · Arte involuntario <em id="cuenta-arte">0/24</em></button>
+    <button data-tab="paseo">2 · Paseo <em id="cuenta-paseo">0/12</em></button>
+    <button data-tab="laminas">3 · Láminas</button>
+  </nav>
+  <div id="estado-global" class="estado"></div>
+</header>
+
+<main>
+  <!-- ===================== ARTE INVOLUNTARIO ===================== -->
+  <section id="tab-arte" class="tab activa">
+    <aside id="categorias"></aside>
+    <div class="contenido">
+      <div id="cab-categoria" class="cab"></div>
+      <div class="barra-busqueda">
+        <input id="busqueda" type="search" placeholder="Busca lo que quieras (mejor en inglés): plastic bag in a tree, rusty gate, sneakers on power lines…">
+        <button id="btn-buscar">Buscar</button>
+        <button id="btn-ia-cat" class="sec oculto" title="Revisa las 30 primeras candidatas con la IA">✨ Revisar con IA</button>
+      </div>
+      <div id="sugerencias" class="chips"></div>
+      <div id="titulo-rejilla" class="titulo-rejilla"></div>
+      <div id="rejilla" class="rejilla"></div>
+      <div class="mas"><button id="btn-mas" class="sec">Ver más</button></div>
+    </div>
+  </section>
+
+  <!-- ===================== PASEO ===================== -->
+  <section id="tab-paseo" class="tab">
+    <aside>
+      <h3>Caminatas detectadas</h3>
+      <p class="ayuda">Agrupadas por fecha y GPS, ordenadas por cuánto paisaje natural tienen.</p>
+      <div id="lista-paseos"></div>
+      <details class="manual">
+        <summary>Elegir fechas a mano</summary>
+        <label>Desde <input type="datetime-local" id="rango-desde"></label>
+        <label>Hasta <input type="datetime-local" id="rango-hasta"></label>
+        <button id="btn-rango" class="sec">Usar este intervalo</button>
+      </details>
+    </aside>
+    <div class="contenido">
+      <div id="cab-paseo" class="cab"><p class="ayuda">Elige una caminata a la izquierda.</p></div>
+      <div id="paseo-fotos" class="rejilla bn"></div>
+      <div id="paseo-editor"></div>
+    </div>
+  </section>
+
+  <!-- ===================== LÁMINAS ===================== -->
+  <section id="tab-laminas" class="tab">
+    <div class="contenido estrecho">
+      <h2>Generar las láminas A3</h2>
+      <div class="form">
+        <label>Tu nombre (aparece en la cabecera) <input id="autor" placeholder="Nombre Apellido"></label>
+        <label>Orden de las 24 fotos
+          <select id="orden"><option value="categoria">Según la progresión de Clément (Vuelos → Apariciones)</option><option value="manual">En el orden en que las elegí</option></select>
+        </label>
+        <label>Contraste del blanco y negro
+          <select id="contraste"><option value="suave">Suave</option><option value="normal" selected>Normal</option><option value="alto">Alto</option></select>
+        </label>
+        <label class="check"><input type="checkbox" id="cabecera" checked> Cabecera con título, nombre y nº de lámina</label>
+      </div>
+      <div id="resumen-seleccion"></div>
+      <button id="btn-generar" class="grande">Generar PDF y JPG</button>
+      <div id="log-generar" class="log oculto"></div>
+      <div id="resultado"></div>
+    </div>
+  </section>
+</main>
+
+<!-- bandeja de selección del arte involuntario -->
+<footer id="bandeja"></footer>
+
+<!-- visor / editor -->
+<div id="modal" class="modal oculto">
+  <div class="caja">
+    <button class="cerrar" id="modal-cerrar">✕</button>
+    <div id="modal-cuerpo"></div>
+  </div>
+</div>
+
+<script src="/web/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+#!/bin/bash
+# Lanzador: ./arte analizar | galeria | laminas | estado | limpiar | todo
+DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ ! -x "$DIR/.venv/bin/python" ]; then
+  echo "Primero hay que instalar: ejecuta  ./instalar.sh"
+  exit 1
+fi
+cd "$DIR"
+exec "$DIR/.venv/bin/python" -m arte_involuntario "$@"

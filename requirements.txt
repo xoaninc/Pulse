@@ -1,0 +1,14 @@
+# Una sola lista para Mac con chip Apple (arm64), Mac Intel (x86_64) y Linux.
+# PyTorch dejó de publicar versiones para Mac Intel en la 2.2.2: allí se fija esa versión.
+torch>=2.4; sys_platform != "darwin" or platform_machine == "arm64"
+torchvision>=0.19; sys_platform != "darwin" or platform_machine == "arm64"
+torch==2.2.2; sys_platform == "darwin" and platform_machine == "x86_64"
+torchvision==0.17.2; sys_platform == "darwin" and platform_machine == "x86_64"
+numpy<2; sys_platform == "darwin" and platform_machine == "x86_64"
+numpy>=1.24
+open_clip_torch>=3.2
+timm>=1.0.17
+pillow>=11.1
+pillow-heif>=0.20
+reportlab>=4.0
+osxphotos>=0.72; sys_platform == "darwin"
