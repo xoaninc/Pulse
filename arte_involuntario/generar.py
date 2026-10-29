@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from . import descargas, disco, imagenes, indice, laminas, rutas
@@ -21,17 +22,38 @@ class Conflicto(Exception):
         self.rev = rev
 
 
+def _apartar_corrupta() -> Path:
+    """Mueve seleccion.json a seleccion.corrupta-<epoch>.json sin pisar una copia anterior."""
+    base = int(time.time())
+    for i in range(1000):
+        copia = rutas.SELECCION.with_name(f"seleccion.corrupta-{base}{f'-{i}' if i else ''}.json")
+        if not copia.exists():
+            os.replace(rutas.SELECCION, copia)
+            return copia
+    raise RuntimeError("demasiadas copias de seleccion.corrupta-*.json en datos/")
+
+
 def leer_seleccion() -> dict:
+    """La selección guardada. Si el fichero está dañado, se aparta (nunca se borra ni se guarda
+    encima) y se devuelve una selección vacía con `_aviso`, que la galería enseña y nunca se guarda."""
     with _LOCK:
         if not rutas.SELECCION.exists():
             return json.loads(json.dumps(VACIA))
         try:
-            return json.loads(rutas.SELECCION.read_text(encoding="utf-8"))
+            sel = json.loads(rutas.SELECCION.read_text(encoding="utf-8"))
+            if not isinstance(sel, dict):
+                raise ValueError("no es un objeto JSON")
+            return sel
         except Exception as e:
-            # nunca devolver una selección vacía que luego se guardaría encima de la buena
-            copia = rutas.SELECCION.with_name("seleccion.corrupta.json")
-            shutil.copyfile(rutas.SELECCION, copia)
-            raise RuntimeError(f"datos/seleccion.json no se puede leer ({e}); copia en {copia.name}") from e
+            try:
+                copia = _apartar_corrupta()
+            except Exception as e2:
+                # sin poder apartarla no se devuelve una vacía: se guardaría encima de la dañada
+                raise RuntimeError(f"datos/seleccion.json no se puede leer ({e}) ni apartar ({e2})") from e
+            vacia = json.loads(json.dumps(VACIA))
+            vacia["_aviso"] = (f"La selección guardada estaba dañada y no se podía leer. Se ha apartado "
+                               f"como datos/{copia.name} y empiezas con una selección vacía.")
+            return vacia
 
 
 def guardar_seleccion(sel: dict, rev_cliente: int | None = None) -> int:
@@ -48,6 +70,7 @@ def guardar_seleccion(sel: dict, rev_cliente: int | None = None) -> int:
         if rev_cliente is not None and rev_cliente < actual:
             raise Conflicto(actual)
         sel = dict(sel)
+        sel.pop("_aviso", None)  # solo viaja al navegador: nunca se guarda
         sel["_rev"] = actual + 1
         fd, tmp = tempfile.mkstemp(dir=rutas.DATOS, suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -77,9 +100,25 @@ def _guardar_jpg(im, ruta: Path, dpi: int, icc: bytes | None, calidad: int = 92)
     im.save(ruta, "JPEG", quality=calidad, dpi=(dpi, dpi), **extra)
 
 
+def _limpiar_temporales_viejos() -> None:
+    """Borra las salida/.generando-* de generaciones que murieron a medias (Terminal cerrada,
+    salida forzada): su `finally` no llegó a ejecutarse. Solo las de más de 1 h, para no tocar
+    la de otra generación que esté en curso."""
+    try:
+        for d in rutas.SALIDA.glob(".generando-*"):
+            try:
+                if d.is_dir() and time.time() - d.stat().st_mtime > 3600:
+                    shutil.rmtree(d, ignore_errors=True)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 def generar(sel: dict | None = None, descargar: bool | None = None, aviso=print) -> dict:
     sel = sel or leer_seleccion()
     rutas.preparar()
+    _limpiar_temporales_viejos()
     op = sel.get("opciones", {}) or {}
     if descargar is None:
         descargar = not op.get("sin_descargar", False)
@@ -87,7 +126,8 @@ def generar(sel: dict | None = None, descargar: bool | None = None, aviso=print)
     paseo = sel.get("paseo", {}) or {}
     pfotos = [p for p in paseo.get("fotos", []) if p.get("uuid")]
     if not arte and not pfotos:
-        raise RuntimeError("Todavía no hay fotos elegidas: abre la galería (./arte galeria), elige y pulsa «Generar».")
+        msg = "Todavía no hay fotos elegidas: abre la galería (./arte galeria), elige y pulsa «Generar»."
+        raise RuntimeError(f"{sel['_aviso']} {msg}" if sel.get("_aviso") else msg)
     disco.comprobar(80 * 1024**2, "generar las láminas", rutas.SALIDA, margen=disco.MARGEN_PEQUENO)
     cfg = cargar_config()
     nombres = {c["id"]: c["nombre"] for c in cfg["categorias"]}
@@ -101,26 +141,57 @@ def generar(sel: dict | None = None, descargar: bool | None = None, aviso=print)
     for it in arte + pfotos:
         m = indice.foto_cualquiera(it["uuid"])
         if m:
-            metas[it["uuid"]] = m
-        else:
-            avisos.append(f"La foto {it['uuid']} ya no está en el índice (¿se borró de Fotos?).")
+            metas[it["uuid"]] = m  # las que faltan las avisa cargar(), que sabe qué foto elegida son
     try:
         resueltas = descargas.resolver(list(metas.values()), descargar=descargar, aviso=aviso)
     except Exception as e:  # nunca dejar sin láminas por un problema de iCloud
         aviso(f"⚠ No se han podido descargar originales ({e}); se usan las previsualizaciones.")
         resueltas = descargas.resolver(list(metas.values()), descargar=False, aviso=aviso)
 
-    px_por_imagen: dict[int, tuple[str, int, str]] = {}
+    # Antes de maquetar, una foto que falla se nombra por su orden en la selección; los avisos
+    # de resolución se escriben después, con la lámina y la posición donde ha quedado de verdad.
+    px_por_imagen: dict[int, tuple[int, str]] = {}
+    fallos: list[str] = []
 
-    def cargar(it, bn, lado_mm, etiqueta):
+    def fallo(txt):
+        fallos.append(txt)
+        avisos.append(txt)
+
+    def cargar(it, bn, lado_mm, etiqueta, detalle=""):
+        m = metas.get(it["uuid"])
+        if not m:
+            etq = f"{etiqueta} ({detalle})" if detalle else etiqueta
+            fallo(f"{etq}: ya no está en el índice (¿se borró de Fotos?); quítala o elige otra en la galería.")
+            return None
+        nombre = m.get("nombre") or it["uuid"]
+        etq = f"{etiqueta} ({', '.join(x for x in (detalle, nombre) if x)})"
         r = resueltas.get(it["uuid"])
         if not r:
-            avisos.append(f"{etiqueta}: no encuentro ninguna imagen de esta foto.")
+            fallo(f"{etq}: no encuentro ninguna imagen de esta foto.")
             return None
-        im = imagenes.abrir(r["ruta"], color=True)
-        cuadrada, px = laminas.preparar_foto(im, it.get("recorte"), lado_mm, bn, op.get("contraste", "normal"))
-        px_por_imagen[id(cuadrada)] = (etiqueta, px, r["origen"])
-        return cuadrada
+        # el original puede estar truncado (descarga cortada) o no decodificarse (HEIC raro):
+        # antes de dar la foto por perdida se prueba con sus previsualizaciones
+        candidatas = [(r["ruta"], r["origen"])]
+        for clave in ("ruta_grande", "ruta_analisis"):
+            if m.get(clave) and all(m[clave] != c[0] for c in candidatas):
+                candidatas.append((m[clave], "previa"))
+        error = None
+        for ruta, origen in candidatas:
+            try:
+                im = imagenes.abrir(ruta, color=True)
+                cuadrada, px = laminas.preparar_foto(im, it.get("recorte"), lado_mm, bn, op.get("contraste", "normal"))
+            except Exception as e:
+                error = error or e
+                continue
+            if error:
+                avisos.append(f"{etq}: no se puede abrir el original ({error}); se usa la previsualización. "
+                              "Vuelve a descargarla si la quieres nítida.")
+            px_por_imagen[id(cuadrada)] = (px, origen)
+            return cuadrada
+        archivo = Path(r["ruta"]).name
+        fallo(f"{etq}: no se puede abrir {'el archivo' if archivo == nombre else archivo} ({error}); "
+              "elige otra foto o vuelve a descargarla.")
+        return None
 
     tmp = Path(tempfile.mkdtemp(prefix=".generando-", dir=rutas.SALIDA))
     try:
@@ -128,65 +199,85 @@ def generar(sel: dict | None = None, descargar: bool | None = None, aviso=print)
             (tmp / sub).mkdir()
 
         lam_arte: list = []
+        cat_por_imagen: dict[int, str] = {}
         if arte:
-            if len(arte) != 24:
-                avisos.append(f"Arte involuntario: hay {len(arte)} fotos (el ejercicio pide 24 = 4 láminas × 6).")
-            presentes = {a.get("categoria") for a in arte}
-            faltan = [nombres[c] for c in laminas.ORDEN_CATEGORIAS if c not in presentes and c in nombres]
-            if faltan:
-                avisos.append("Categorías sin representar: " + ", ".join(faltan) + " (el ejercicio pide intentar que estén todas).")
-            fotos = []
+            fotos_arte = []
             for k, it in enumerate(arte, 1):
-                etiqueta = f"Lámina {(k - 1) // 6 + 1}, foto {(k - 1) % 6 + 1} ({nombres.get(it.get('categoria'), '?')})"
-                im = cargar(it, False, laminas.LADO_ARTE, etiqueta)
+                cat = nombres.get(it.get("categoria"), "?")
+                im = cargar(it, False, laminas.LADO_ARTE, f"Arte, foto elegida nº {k}", cat)
                 if im is None:
                     continue
-                _guardar_jpg(im, tmp / "fotos_arte" / f"{k:02d}_{it.get('categoria', 'x')}.jpg", 300, icc)
-                fotos.append({"im": im, "categoria": it.get("categoria", ""), "pie": it.get("pie", "")})
-            lam_arte = laminas.maquetar_arte(fotos, fu, autor, nombres, cabecera=op.get("cabecera", True))
+                # numerada como en la lámina (las que no se han podido cargar no ocupan hueco)
+                _guardar_jpg(im, tmp / "fotos_arte" / f"{len(fotos_arte) + 1:02d}_{it.get('categoria', 'x')}.jpg", 300, icc)
+                fotos_arte.append({"im": im, "categoria": it.get("categoria", ""), "pie": it.get("pie", "")})
+                cat_por_imagen[id(im)] = cat
+            if fotos_arte:
+                if len(fotos_arte) != 24:
+                    avisos.append(f"Arte involuntario: hay {len(fotos_arte)} fotos en las láminas "
+                                  "(el ejercicio pide 24 = 4 láminas × 6).")
+                presentes = {f["categoria"] for f in fotos_arte}
+                faltan = [nombres[c] for c in laminas.ORDEN_CATEGORIAS if c not in presentes and c in nombres]
+                if faltan:
+                    avisos.append("Categorías sin representar: " + ", ".join(faltan) + " (el ejercicio pide intentar que estén todas).")
+                lam_arte = laminas.maquetar_arte(fotos_arte, fu, autor, nombres, cabecera=op.get("cabecera", True))
+            else:
+                avisos.append("Arte involuntario: no se ha podido cargar ninguna foto; vuelve a elegirlas en la galería.")
 
         lam_paseo: list = []
+        marca_por_imagen: dict[int, str] = {}
         if pfotos:
-            if len(pfotos) < 12:
-                avisos.append(f"Paseo: hay {len(pfotos)} fotos (mínimo 12).")
             if not (paseo.get("titulo") or "").strip():
                 avisos.append("Paseo: falta la palabra-título (como LIZARDS o CLOUDS en las obras de Fulton).")
             if not (paseo.get("linea") or "").strip():
                 avisos.append("Paseo: falta la línea que describe la caminata.")
-            n = len(pfotos)
-            fotos = []
+            fotos_paseo = []
             for k, it in enumerate(pfotos, 1):
-                marca = "ORIGEN" if k == 1 else ("FINAL" if k == n else f"{k:02d}")
-                im = cargar(it, True, 110, f"Paseo, foto {marca}")
+                im = cargar(it, True, 110, f"Paseo, foto elegida nº {k}")
                 if im is None:
                     continue
-                _guardar_jpg(im, tmp / "fotos_paseo" / f"{k:02d}.jpg", 300, icc)
+                _guardar_jpg(im, tmp / "fotos_paseo" / f"{len(fotos_paseo) + 1:02d}.jpg", 300, icc)
                 m = metas.get(it["uuid"], {})
                 alt = it.get("alt") if it.get("alt") is not None else m.get("alt")
-                fotos.append({"im": im, "frase": it.get("frase", ""), "km": it.get("km"), "alt": alt,
-                              "fecha": m.get("fecha"), "lat": m.get("lat"), "lon": m.get("lon")})
-            lam_paseo = laminas.maquetar_paseo(
-                fotos, fu, paseo.get("titulo", ""), paseo.get("linea", ""), autor,
-                mayusculas=paseo.get("mayusculas", True), dibujo=paseo.get("dibujo", True),
-                cabecera=op.get("cabecera", True), diseno=paseo.get("diseno", "rejilla"),
-                datos=paseo.get("datos", True),
-            )
+                fotos_paseo.append({"im": im, "frase": it.get("frase", ""), "km": it.get("km"), "alt": alt,
+                                    "fecha": m.get("fecha"), "lat": m.get("lat"), "lon": m.get("lon")})
+            n = len(fotos_paseo)
+            for j, f in enumerate(fotos_paseo):  # la misma numeración que lleva cada foto en la lámina
+                marca_por_imagen[id(f["im"])] = "ORIGEN" if j == 0 else ("FINAL" if j == n - 1 else f"{j + 1:02d}")
+            if fotos_paseo:
+                if n < 12:
+                    avisos.append(f"Paseo: hay {n} fotos en las láminas (mínimo 12).")
+                lam_paseo = laminas.maquetar_paseo(
+                    fotos_paseo, fu, paseo.get("titulo", ""), paseo.get("linea", ""), autor,
+                    mayusculas=paseo.get("mayusculas", True), dibujo=paseo.get("dibujo", True),
+                    cabecera=op.get("cabecera", True), diseno=paseo.get("diseno", "rejilla"),
+                    datos=paseo.get("datos", True),
+                )
+            else:
+                avisos.append("Paseo: no se ha podido cargar ninguna foto; vuelve a elegirlas en la galería.")
 
         todas = lam_arte + lam_paseo
+        if not todas:  # la salida anterior se queda como estaba
+            raise RuntimeError("No se ha podido cargar ninguna de las fotos elegidas; vuelve a elegirlas en la galería. "
+                               + " ".join(fallos[:3]) + (" …" if len(fallos) > 3 else ""))
         if not autor:
             avisos.append("Falta tu nombre para la cabecera (pestaña Láminas).")
         # resolución efectiva de cada foto tal como ha quedado en la lámina
+        etiquetas = {id(e.im): f"Paseo, foto {marca_por_imagen.get(id(e.im), '?')}"
+                     for L in lam_paseo for e in L.elementos if isinstance(e, laminas.Foto)}
+        for li, L in enumerate(lam_arte, 1):
+            for j, e in enumerate((e for e in L.elementos if isinstance(e, laminas.Foto)), 1):
+                etiquetas[id(e.im)] = f"Lámina {li}, foto {j} ({cat_por_imagen.get(id(e.im), '?')})"
         for L in todas:
             avisos.extend(L.avisos)
             for e in L.elementos:
                 if isinstance(e, laminas.Foto) and id(e.im) in px_por_imagen:
-                    etiqueta, px, origen = px_por_imagen[id(e.im)]
+                    px, origen = px_por_imagen[id(e.im)]
                     ppi = px / (e.lado / 25.4)
                     if ppi < laminas.PPI_MINIMO:
                         motivo = ("previsualización de iCloud (no se pudo bajar el original)" if origen == "previa"
                                   else "recorte con mucho zoom o foto pequeña")
-                        avisos.append(f"{etiqueta}: {px} px tras el recorte → {ppi:.0f} ppp impresa ({motivo}); "
-                                      "se verá algo blanda. Baja el zoom o elige otra.")
+                        avisos.append(f"{etiquetas.get(id(e.im), 'Foto')}: {px} px tras el recorte → {ppi:.0f} ppp impresa "
+                                      f"({motivo}); se verá algo blanda. Baja el zoom o elige otra.")
 
         if lam_arte:
             laminas.pdf(lam_arte, tmp / "01_arte_involuntario.pdf", fu, "Colección de arte involuntario", autor)

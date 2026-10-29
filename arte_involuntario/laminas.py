@@ -229,8 +229,11 @@ def texto_en_caja(texto, fu, estilo, pt, ancho, max_lineas, pt_min=6.0, tracking
         if len(lineas) <= max_lineas or pt <= pt_min:
             recortado = len(lineas) > max_lineas
             if recortado:
-                lineas = lineas[:max_lineas]
-                lineas[-1] = lineas[-1].rstrip(".,;: ") + "…"
+                # la última línea puede ir llena hasta el borde: quitar letras hasta que quepa «…»
+                ult = lineas[max_lineas - 1].rstrip(".,;:- ")
+                while ult and fu.ancho(ult + "…", estilo, pt, tracking) > ancho:
+                    ult = ult[:-1].rstrip(".,;:- ")
+                lineas = lineas[:max_lineas - 1] + [ult + "…"]
             return lineas, pt, recortado
         pt -= 0.5
 
@@ -266,6 +269,8 @@ LADO_ARTE = 106.0
 def maquetar_arte(fotos: list[dict], fu: Fuentes, autor: str = "", nombres: dict | None = None,
                   cabecera: bool = True) -> list[Lamina]:
     """`fotos`: dicts con im (PIL), categoria, pie. Devuelve 4 láminas (o las que hagan falta)."""
+    if not fotos:
+        return []  # sin fotos no se genera una lámina vacía
     nombres = nombres or {}
     W, H = A3
     s, gap_x, gap_y, cap = LADO_ARTE, 15.0, 12.0, 15.0
@@ -323,65 +328,136 @@ def _rejilla(n: int, ancho: float, alto: float, cap: float, gap: float) -> tuple
     return mejor
 
 
-def _km_redondo(km: float) -> float:
-    for v in (0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50):
-        if v >= km:
-            return v
-    return 100.0
+ALTO_PERFIL = 24.0    # alto de la franja del perfil de altitud (mm)
+ALTO_PLANTA = 45.0    # alto máximo de la franja de la planta del recorrido
+ANCHO_PLANTA = 120.0  # ancho máximo del dibujo en planta
+BARRAS_KM = (20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01)
 
 
-def _dibujo_recorrido(L: Lamina, fotos: list[dict], x: float, y: float, w: float, h: float, fu: Fuentes) -> bool:
-    """Perfil de altitud (si hay altitudes) o planta del recorrido desde el GPS, como los murales
-    de Fulton, con el número de cada foto. Ocupa la caja (x, y, w, h)."""
+def _plan_dibujo(fotos: list[dict]) -> tuple[dict | None, str]:
+    """Decide qué se dibuja antes de maquetar, porque de ello depende el alto de la franja superior:
+    perfil de altitud si hay altitudes y km, planta desde el GPS si no, o nada.
+    Devuelve (plan, motivo por el que no se dibuja)."""
+    n = len(fotos)
+    con_alt = [(k, f) for k, f in enumerate(fotos) if f.get("alt") is not None and f.get("km") is not None]
+    con_gps = [(k, f) for k, f in enumerate(fotos) if f.get("lat") is not None and f.get("lon") is not None]
+    if len(con_alt) >= max(4, n * 0.6):
+        kms = [float(f["km"]) for _, f in con_alt]
+        if max(kms) - min(kms) >= 0.2:  # con todos los km iguales, los puntos caerían en la misma x
+            return {"tipo": "perfil", "puntos": con_alt, "alto": ALTO_PERFIL}, ""
+    if len(con_gps) < 3:
+        return None, "Paseo: las fotos no tienen GPS, así que no se dibuja el recorrido."
+    lat0 = sum(f["lat"] for _, f in con_gps) / len(con_gps)
+    kx = 111.32 * math.cos(math.radians(lat0))  # km por grado de longitud
+    xs = [f["lon"] * kx for _, f in con_gps]
+    ys = [f["lat"] * 110.57 for _, f in con_gps]
+    dx, dy = max(xs) - min(xs), max(ys) - min(ys)
+    if max(dx, dy) < 0.05:  # todo en menos de 50 m (ubicación puesta a mano, GPS parado…): no hay recorrido
+        return None, ("Paseo: todas las fotos tienen casi la misma posición GPS, "
+                      "así que no se dibuja el recorrido.")
+    esc = min(ANCHO_PLANTA / max(dx, 1e-9), (ALTO_PLANTA - 7) / max(dy, 1e-9))  # mm por km, igual en x e y
+    # recorridos apaisados: la franja solo crece lo que pide el dibujo (las fotos no encogen de más)
+    return {"tipo": "planta", "puntos": con_gps, "xs": xs, "ys": ys, "esc": esc,
+            "alto": max(ALTO_PERFIL, dy * esc + 7)}, ""
+
+
+def _se_pisan(a, b, holgura: float = 0.3) -> bool:
+    """¿Se tocan dos cajas (x0, y0, x1, y1), dejando `holgura` mm de aire?"""
+    return min(a[2], b[2]) - max(a[0], b[0]) > -holgura and min(a[3], b[3]) - max(a[1], b[1]) > -holgura
+
+
+def _cruza_caja(p, q, caja, holgura: float = 0.35) -> bool:
+    """¿Pasa el tramo p–q por la caja (agrandada `holgura` mm)? Recorte de Liang-Barsky."""
+    x0, y0, x1, y1 = caja[0] - holgura, caja[1] - holgura, caja[2] + holgura, caja[3] + holgura
+    dx, dy = q[0] - p[0], q[1] - p[1]
+    t0, t1 = 0.0, 1.0
+    for pk, qk in ((-dx, p[0] - x0), (dx, x1 - p[0]), (-dy, p[1] - y0), (dy, y1 - p[1])):
+        if pk == 0:
+            if qk < 0:
+                return False
+            continue
+        t = qk / pk
+        if pk < 0:
+            t0 = max(t0, t)
+        else:
+            t1 = min(t1, t)
+        if t0 > t1:
+            return False
+    return True
+
+
+def _dibujo_recorrido(L: Lamina, fotos: list[dict], plan: dict, x: float, y: float, w: float, fu: Fuentes) -> None:
+    """Perfil de altitud o planta del recorrido desde el GPS, como los murales de Fulton, con el
+    número de cada foto. Ocupa la caja (x, y, w, plan["alto"])."""
     from .paseos import km_entre, num_es
 
     n = len(fotos)
-    marcas = ["O" if k == 0 else ("F" if k == n - 1 else f"{k + 1:02d}") for k in range(n)]
-    con_alt = [(k, f) for k, f in enumerate(fotos) if f.get("alt") is not None and f.get("km") is not None]
-    con_gps = [(k, f) for k, f in enumerate(fotos) if f.get("lat") is not None and f.get("lon") is not None]
+    h = plan["alto"]
     alto_util = h - 7
-    if len(con_alt) >= max(4, n * 0.6):
-        xs = [f["km"] for _, f in con_alt]
-        ys = [f["alt"] for _, f in con_alt]
-        dx, dy = (max(xs) - min(xs)) or 1e-9, (max(ys) - min(ys)) or 1.0
+    idx = [k for k, _ in plan["puntos"]]
+    ocupado = []  # cajas que no puede pisar ningún número
+    if plan["tipo"] == "perfil":
+        xs = [float(f["km"]) for _, f in plan["puntos"]]
+        ys = [float(f["alt"]) for _, f in plan["puntos"]]
+        dx, dy = max(xs) - min(xs), (max(ys) - min(ys)) or 1.0
         pts = [(x + (a - min(xs)) / dx * w, y + 3 + alto_util - (b - min(ys)) / dy * alto_util) for a, b in zip(xs, ys)]
-        idx = [k for k, _ in con_alt]
-        etiqueta = (f"PERFIL DE LA CAMINATA · {num_es(min(ys), 0)}–{num_es(max(ys), 0)} M · "
-                    f"{num_es(max(xs) - min(xs))} KM")
-    elif len(con_gps) >= 3:
-        lat0 = sum(f["lat"] for _, f in con_gps) / len(con_gps)
-        kx = 111.32 * math.cos(math.radians(lat0))  # km por grado de longitud
-        xs = [f["lon"] * kx for _, f in con_gps]
-        ys = [f["lat"] * 110.57 for _, f in con_gps]
-        dx, dy = (max(xs) - min(xs)) or 1e-6, (max(ys) - min(ys)) or 1e-6
-        caja = min(w, 120.0)
-        esc = min(caja / dx, alto_util / dy)  # mm por km, misma escala en x e y
-        ox = x + (w - dx * esc) / 2
-        oy = y + 3 + (alto_util + dy * esc) / 2
-        pts = [(ox + (a - min(xs)) * esc, oy - (b - min(ys)) * esc) for a, b in zip(xs, ys)]
-        idx = [k for k, _ in con_gps]
-        # barra de escala y norte
-        km_barra = _km_redondo(max(0.05, dx / 4))
-        bx = x + w - km_barra * esc
-        L.elementos.append(Linea([(bx, y + h + 1.2), (x + w, y + h + 1.2)], 0.35))
-        L.elementos.append(Texto(x + w, y + h + 3.6, f"{num_es(km_barra, 1 if km_barra < 1 else 0)} KM", "normal", 5.5, "der", gris=0.35))
-        L.elementos.append(Linea([(x + w - 1.2, y + 4.5), (x + w - 1.2, y + 0.8)], 0.3))
-        L.elementos.append(Texto(x + w - 1.2, y + 7.6, "N", "normal", 5.5, "centro", gris=0.35))
-        etiqueta = f"RECORRIDO · {num_es(sum(km_entre((con_gps[i][1]['lat'], con_gps[i][1]['lon']), (con_gps[i + 1][1]['lat'], con_gps[i + 1][1]['lon'])) for i in range(len(con_gps) - 1)))} KM"
+        L.elementos.append(Texto(x, y + h + 2.6, f"PERFIL DE LA CAMINATA · {num_es(min(ys), 0)}–{num_es(max(ys), 0)} M · "
+                                 f"{num_es(dx)} KM", "normal", 6, tracking=0.12, gris=0.35))
     else:
-        return False
+        xs, ys, esc = plan["xs"], plan["ys"], plan["esc"]
+        ancho_d, alto_d = (max(xs) - min(xs)) * esc, (max(ys) - min(ys)) * esc
+        # barra de escala de un valor redondo (25 mm como mucho) y norte, en una columna junto al dibujo
+        km_barra = next((v for v in BARRAS_KM if v * esc <= 25), None)
+        txt_barra = ""
+        if km_barra:
+            txt_barra = f"{num_es(km_barra, 0)} KM" if km_barra >= 1 else f"{round(km_barra * 1000)} M"
+        col = max(km_barra * esc if km_barra else 0, fu.ancho(txt_barra, "normal", 5.5), 2.4)
+        ox = x + (w - (ancho_d + 5 + col)) / 2  # dibujo + columna, centrados juntos
+        oy = y + 3 + (alto_util + alto_d) / 2   # base del dibujo, centrado en vertical
+        pts = [(ox + (a - min(xs)) * esc, oy - (b - min(ys)) * esc) for a, b in zip(xs, ys)]
+        bx = ox + ancho_d + 5
+        ocupado.append((bx - 0.5, y, bx + col, y + h))
+        L.elementos.append(Linea([(bx + 1.2, y + 4.5), (bx + 1.2, y + 0.8)], 0.3))
+        L.elementos.append(Linea([(bx + 0.4, y + 2.0), (bx + 1.2, y + 0.8), (bx + 2.0, y + 2.0)], 0.3))
+        L.elementos.append(Texto(bx + 1.2, y + 7.6, "N", "normal", 5.5, "centro", gris=0.35))
+        if km_barra:
+            yb, lb = y + 3 + alto_util, km_barra * esc
+            L.elementos.append(Linea([(bx, yb - 0.8), (bx, yb), (bx + lb, yb), (bx + lb, yb - 0.8)], 0.3))
+            L.elementos.append(Texto(bx, yb + 2.4, txt_barra, "normal", 5.5, gris=0.35))
+        gps = [(f["lat"], f["lon"]) for _, f in plan["puntos"]]
+        km = sum(km_entre(a, b) for a, b in zip(gps, gps[1:]))
+        L.elementos.append(Texto(ox + ancho_d / 2, y + h + 2.6, f"RECORRIDO · {num_es(km)} KM", "normal", 6, "centro",
+                                 tracking=0.12, gris=0.35))
     L.elementos.append(Linea(pts, 0.4))
+    cajas_puntos = []
     for k, (px, py) in zip(idx, pts):
-        if k == 0:
-            L.elementos.append(Punto(px, py, 1.2, True))
-        elif k == n - 1:
-            L.elementos.append(Punto(px, py, 1.2, False))
-        else:
-            L.elementos.append(Punto(px, py, 0.5, True))
-        if k not in (0, n - 1):
-            L.elementos.append(Texto(px, py - 2.0, marcas[k], "normal", 5, "centro", gris=0.4))
-    L.elementos.append(Texto(x, y + h + 2.6, etiqueta, "normal", 6, tracking=0.12, gris=0.35))
-    return True
+        r = 1.2 if k in (0, n - 1) else 0.5  # ORIGEN relleno y FINAL hueco, sin número
+        L.elementos.append(Punto(px, py, r, k != n - 1))
+        cajas_puntos.append((px - r, py - r, px + r, py + r))
+    if idx[0] == 0 and idx[-1] == n - 1 and math.dist(pts[0], pts[-1]) < 2.4:
+        L.elementos.append(Punto(*pts[0], 0.6, True))  # paseo circular: que el ORIGEN no quede tapado
+    # número de cada foto junto a su punto: encima o, si ahí lo cruza el recorrido, a un lado.
+    # Si no cabe sin pisar otro número, un punto o la línea (fotos muy seguidas), se omite.
+    hm = 5 * PT * 0.72  # alto de las cifras
+    tramos = list(zip(pts, pts[1:]))
+    for i, (k, (px, py)) in enumerate(zip(idx, pts)):
+        if k in (0, n - 1):
+            continue
+        marca = f"{k + 1:02d}"
+        wm = fu.ancho(marca, "normal", 5)
+        a, b = pts[max(0, i - 1)], pts[min(len(pts) - 1, i + 1)]
+        largo = math.hypot(b[0] - a[0], b[1] - a[1]) or 1.0
+        nx, ny = (b[1] - a[1]) / largo, (a[0] - b[0]) / largo  # perpendicular al recorrido
+        for ux, uy in ((0.0, -1.0), (nx, ny), (-nx, -ny), (0.0, 1.0)):
+            d = 0.9 + abs(ux) * wm / 2 + abs(uy) * hm / 2
+            cx, cy = px + ux * d, py + uy * d
+            caja = (cx - wm / 2, cy - hm / 2, cx + wm / 2, cy + hm / 2)
+            if (any(_se_pisan(caja, c, 0.5) for c in ocupado) or any(_cruza_caja(p, q, caja) for p, q in tramos)
+                    or any(_se_pisan(caja, c) for j, c in enumerate(cajas_puntos) if j != i)):
+                continue
+            ocupado.append(caja)
+            L.elementos.append(Texto(cx, cy + hm / 2, marca, "normal", 5, "centro", gris=0.4))
+            break
 
 
 def datos_foto(f: dict) -> str:
@@ -408,6 +484,8 @@ def maquetar_paseo(fotos: list[dict], fu: Fuentes, titulo: str, linea: str, auto
     que se leen como un díptico: misma franja superior y misma rejilla en las dos.
     Como en las obras de Fulton: PALABRA-TÍTULO y línea de la caminata centradas arriba; bajo cada
     foto, una línea de datos (ORIGEN/nº · hora · km · altitud) y la frase del suceso."""
+    if not fotos:
+        return []
     W, H = A3
     n = len(fotos)
     corte = math.ceil(n / 2)
@@ -421,9 +499,12 @@ def maquetar_paseo(fotos: list[dict], fu: Fuentes, titulo: str, linea: str, auto
     alto_tit = pt_tit * PT * 0.78 + 7.5 if tit else 4
     lns, ptl, _ = texto_en_caja(linea.upper(), fu, "normal", 9, W - 2 * margen - 40, 2, 7, tracking=0.08) if linea else ([], 9, False)
     alto_linea = (len(lns) - 1) * ptl * PT * 1.4 + 2 if lns else 0
-    alto_dibujo = 24.0 if dibujo else 0.0
+    # qué dibujo cabe (perfil, planta o nada) se decide antes, porque fija el alto de la franja
+    plan, motivo = _plan_dibujo(fotos) if dibujo else (None, "")
+    alto_dibujo = plan["alto"] if plan else 0.0
     # franja superior común: lámina 1 = título + línea; lámina 2 = línea + dibujo del recorrido
-    franja = max(alto_tit + alto_linea, 4 + alto_linea + (alto_dibujo + 9 if dibujo else 0))
+    # (sin dibujo no se reserva sitio, así no queda una banda vacía en las dos láminas)
+    franja = max(alto_tit + alto_linea, 4 + alto_linea + (alto_dibujo + 9 if plan else 0))
     zona_y = top + franja + 8
     alto = H - zona_y - 15
     ancho = W - 2 * margen
@@ -443,9 +524,10 @@ def maquetar_paseo(fotos: list[dict], fu: Fuentes, titulo: str, linea: str, auto
         for j, ln in enumerate(lns):
             L.elementos.append(Texto(W / 2, y_linea + j * ptl * PT * 1.4, ln, "normal", ptl, "centro", tracking=0.08))
         if p == 1 and dibujo:
-            y_d = y_linea + alto_linea + 5
-            if not _dibujo_recorrido(L, fotos, margen + 20, y_d, W - 2 * margen - 40, alto_dibujo, fu):
-                L.avisos.append("Paseo: las fotos no tienen GPS, así que no se dibuja el recorrido.")
+            if plan:
+                _dibujo_recorrido(L, fotos, plan, margen + 20, y_linea + alto_linea + 5, W - 2 * margen - 40, fu)
+            else:
+                L.avisos.append(motivo)
         if cabecera:
             L.elementos.append(Texto(margen, H - 9, "PASEO FOTOGRÁFICO SEGÚN LAS PAUTAS DE HAMISH FULTON", "normal", 6.5, gris=0.45, tracking=0.12))
             der = f"{autor.upper()}  ·  " if autor else ""
@@ -481,7 +563,12 @@ def _foto_paseo(L, f, x, y, s, num, n, fu, mayusculas=True, datos=True):
         d = datos_foto(f)
         if d:
             xd = xm + fu.ancho(marca, "negrita", pt_m, 0.12) + 2.2
-            L.elementos.append(Texto(xd, y1, "·  " + d, "normal", 6.5, gris=0.45, tracking=0.06))
+            # fotos pequeñas (diseño «crece» con muchas fotos): se quita la altitud y después los km
+            txt = "·  " + d
+            while fu.ancho(txt, "normal", 6.5, 0.06) > x + s - xd and " · " in txt:
+                txt = txt.rsplit(" · ", 1)[0]
+            if fu.ancho(txt, "normal", 6.5, 0.06) <= x + s - xd:
+                L.elementos.append(Texto(xd, y1, txt, "normal", 6.5, gris=0.45, tracking=0.06))
     frase = (f.get("frase") or "").strip()
     if mayusculas:
         frase = frase.upper()

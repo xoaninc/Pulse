@@ -43,7 +43,12 @@ def _config() -> dict:
             ln = ln.strip().removeprefix("export ").strip()
             m = re.match(r"^([A-Z_]+)\s*=\s*(.+?)\s*\\?$", ln)
             if m:
-                valores.setdefault(m.group(1), m.group(2).strip().strip('"').strip("'").strip())
+                # en un .rtf la línea puede acabar en «}» o «\» (fin de grupo, salto de línea)
+                v = m.group(2).strip().rstrip("}\\ ").strip().strip('"').strip("'").strip()
+                if m.group(1) in ("GROQ_API_KEY", "ARTE_IA_CLAVE"):
+                    g = re.search(r"gsk_[A-Za-z0-9]{20,}", v)
+                    v = g.group(0) if g else v
+                valores.setdefault(m.group(1), v)
         sueltas += re.findall(r"gsk_[A-Za-z0-9]{20,}", texto)
     get = lambda *ks: next((valores.get(k) or os.environ.get(k) for k in ks if valores.get(k) or os.environ.get(k)), None)  # noqa: E731
     cfg["clave"] = get("ARTE_IA_CLAVE", "GROQ_API_KEY") or (sueltas[0] if sueltas else None)

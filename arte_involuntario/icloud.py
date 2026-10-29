@@ -6,6 +6,7 @@ Necesita que la Terminal tenga permiso en Ajustes → Privacidad y seguridad →
 """
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from pathlib import Path
@@ -13,6 +14,8 @@ from pathlib import Path
 from . import disco, rutas
 
 KB_POR_MINIATURA = 150 * 1024
+SEGUNDOS_POR_MINIATURA = 60      # si iCloud no la entrega en este tiempo, se salta
+FALLOS_SEGUIDOS = 3              # cuelgues seguidos: iCloud no responde, dejar de pedir
 
 
 def ruta_cache(uuid: str) -> Path:
@@ -38,41 +41,8 @@ def _autorizar(timeout: float = 120.0):
         )
 
 
-def _guardar_reducida(asset, destino: Path, lado: int = 768, calidad: float = 0.82) -> None:
-    import objc
-    import Photos
-    import Quartz
-    from Foundation import NSURL
-
-    op = Photos.PHImageRequestOptions.alloc().init()
-    op.setSynchronous_(True)
-    op.setDeliveryMode_(Photos.PHImageRequestOptionsDeliveryModeHighQualityFormat)
-    op.setResizeMode_(Photos.PHImageRequestOptionsResizeModeExact)
-    op.setVersion_(Photos.PHImageRequestOptionsVersionCurrent)
-    op.setNetworkAccessAllowed_(True)
-    res: dict = {}
-
-    def recibir(imagen, info):
-        res["im"], res["info"] = imagen, dict(info or {})
-
-    with objc.autorelease_pool():
-        Photos.PHImageManager.defaultManager().requestImageForAsset_targetSize_contentMode_options_resultHandler_(
-            asset, (float(lado), float(lado)), Photos.PHImageContentModeAspectFit, op, recibir)
-        im = res.get("im")
-        if im is None:
-            raise RuntimeError(str(res.get("info", {}).get("PHImageErrorKey") or "sin imagen"))
-        cg, _ = im.CGImageForProposedRect_context_hints_(None, None, None)
-        url = NSURL.fileURLWithPath_(str(destino))
-        dst = Quartz.CGImageDestinationCreateWithURL(url, "public.jpeg", 1, None)
-        Quartz.CGImageDestinationAddImage(dst, cg, {Quartz.kCGImageDestinationLossyCompressionQuality: calidad})
-        if not Quartz.CGImageDestinationFinalize(dst):
-            raise RuntimeError("no se pudo escribir la miniatura")
-
-
 def traer(uuids: list[str], maximo: int | None = None) -> int:
     """Descarga miniaturas reducidas para `uuids`. Devuelve cuántas se han traído."""
-    import sys
-
     if sys.platform != "darwin":
         print("  (--traer-icloud solo funciona en macOS)")
         return 0
@@ -89,34 +59,40 @@ def traer(uuids: list[str], maximo: int | None = None) -> int:
         if not pendientes:
             return 0
     _autorizar()
-    import Photos
+    from .exportar_photokit import Caido, Colgado, Exportador
 
     print(f"· Pidiendo {len(pendientes)} miniaturas reducidas a iCloud (no se descargan originales)…")
-    ids = [f"{u}/L0/001" for u in pendientes]
-    activos = {}
-    r = Photos.PHAsset.fetchAssetsWithLocalIdentifiers_options_(ids, None)
-    for i in range(r.count()):
-        a = r.objectAtIndex_(i)
-        activos[str(a.localIdentifier()).split("/")[0]] = a
-    hechas = 0
-    t0 = time.time()
+    hechas = errores = seguidos = 0
+    t0 = time.monotonic()
     try:
-        for k, u in enumerate(pendientes, 1):
-            a = activos.get(u)
-            if a is None:
-                continue
-            tmp = ruta_cache(u).with_suffix(".tmp.jpg")
-            try:
-                _guardar_reducida(a, tmp)
-                tmp.replace(ruta_cache(u))
-                hechas += 1
-            except Exception as e:
-                tmp.unlink(missing_ok=True)
-                if k <= 3:
-                    print(f"  ! {u}: {e}")
-            if k % 25 == 0:
-                print(f"\r  {k}/{len(pendientes)} · {k / (time.time() - t0):.1f}/s   ", end="", flush=True)
+        # Cada petición va a un proceso aparte: si iCloud se cuelga con una foto, se mata ese
+        # proceso y se sigue con la siguiente (y Ctrl+C siempre funciona).
+        with Exportador() as ex:
+            for k, u in enumerate(pendientes, 1):
+                tmp = ruta_cache(u).with_suffix(".tmp.jpg")
+                try:
+                    ex.pedir("miniatura", u, tmp, SEGUNDOS_POR_MINIATURA, lado=768)
+                    tmp.replace(ruta_cache(u))
+                    hechas += 1
+                    seguidos = 0
+                except (Colgado, Caido) as e:
+                    tmp.unlink(missing_ok=True)
+                    seguidos += 1
+                    print(f"\r  ! {u}: {e}" + " " * 20)
+                    if seguidos >= FALLOS_SEGUIDOS:
+                        print("  ⚠ iCloud no responde (¿sin internet?): dejo de pedir miniaturas.")
+                        break
+                except Exception as e:
+                    tmp.unlink(missing_ok=True)
+                    seguidos = 0  # Fotos contesta: es un problema de esta foto
+                    errores += 1
+                    if errores <= 3:
+                        print(f"\r  ! {u}: {e}" + " " * 20)
+                if k % 25 == 0:
+                    print(f"\r  {k}/{len(pendientes)} · {k / (time.monotonic() - t0):.1f}/s   ", end="", flush=True)
     except KeyboardInterrupt:
         print("\n  Interrumpido: lo traído queda guardado.")
+    if errores > 3:
+        print(f"\n  ({errores} fotos no se pudieron traer)", end="")
     print(f"\n  {hechas} miniaturas traídas ({rutas.legible(rutas.tam_carpeta(rutas.MINIATURAS_ICLOUD))} en total).")
     return hechas

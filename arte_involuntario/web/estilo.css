@@ -111,7 +111,7 @@ aside h3 { margin: 4px 0; font-size: 15px; }
   position: absolute; top: 6px; right: 6px; background: var(--rosa); color: #fff; font-weight: 700;
   font-size: 12px; padding: 2px 8px; border-radius: 99px;
 }
-.rejilla.bn .tarjeta .img { filter: grayscale(1) contrast(1.08); }
+.rejilla.bn .tarjeta .img { filter: grayscale(1) contrast(1.08); cursor: pointer; }  /* en el paseo el clic añade o quita, no amplía */
 .rejilla.bn .tarjeta.no-util { opacity: .45; }
 .mas { text-align: center; margin: 18px 0; }
 

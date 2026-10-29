@@ -3,7 +3,8 @@
 Orden de preferencia:
  1. versión editada u original que ya esté en el disco (no copia nada);
  2. descarga desde iCloud de esa foto concreta con PhotoKit (versión actual, con tus
-    ediciones), a datos/originales/;
+    ediciones; de una Live Photo, solo la foto fija), a datos/originales/, en un proceso
+    aparte que se mata si iCloud se cuelga (ver exportar_photokit.py);
  3. si no se puede, la mayor previsualización local (avisando de la resolución).
 Nunca deja sin láminas: cualquier fallo de iCloud se convierte en un aviso.
 """
@@ -14,8 +15,6 @@ import os
 import shutil
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as TiempoAgotado
 from pathlib import Path
 
 from . import disco, rutas
@@ -96,17 +95,8 @@ def resolver(fotos: list[dict], descargar: bool = True, aviso=print) -> dict[str
     return out
 
 
-def _exportar(uuid: str, destino: Path) -> str:
-    from osxphotos.photokit import PHOTOS_VERSION_CURRENT, PhotoLibrary
-
-    activo = PhotoLibrary().fetch_uuid(uuid)
-    rutas_ = activo.export(str(destino), version=PHOTOS_VERSION_CURRENT, overwrite=True)
-    if not rutas_ or not _es_imagen_valida(rutas_[0]):
-        raise RuntimeError("iCloud no devolvió la imagen")
-    return rutas_[0]
-
-
 def _descargar_icloud(fotos: list[dict], aviso) -> dict[str, str]:
+    from .exportar_photokit import Colgado, Exportador
     from .icloud import _autorizar
 
     try:
@@ -116,31 +106,33 @@ def _descargar_icloud(fotos: list[dict], aviso) -> dict[str, str]:
         return {}
     aviso(f"· Descargando de iCloud {len(fotos)} fotos elegidas (solo estas)…")
     resultado: dict[str, str] = {}
-    t0 = time.time()
+    t0 = time.monotonic()
     seguidos = 0
-    ex = ThreadPoolExecutor(max_workers=1)
-    try:
+    # Cada exportación va a un proceso aparte (exportar_photokit): si iCloud se cuelga, se mata ese
+    # proceso y la app sigue, termina y no pierde lo que imprime. Al salir del `with` (también con
+    # Ctrl+C o un error) el proceso se cierra.
+    with Exportador() as ex:
         for k, f in enumerate(fotos, 1):
             nombre = f.get("nombre") or f["uuid"]
             if not disco.cabe(2 * MB_POR_FOTO, rutas.ORIGINALES):
                 aviso(f"⚠ Poco espacio libre: dejo de descargar; las {len(fotos) - k + 1} restantes usan la previsualización.")
                 break
-            if time.time() - t0 > SEGUNDOS_TOTALES:
+            if time.monotonic() - t0 > SEGUNDOS_TOTALES:
                 aviso("⚠ iCloud va muy lento: dejo de descargar; el resto usa la previsualización.")
                 break
             destino = rutas.ORIGINALES / f["uuid"]
             destino.mkdir(parents=True, exist_ok=True)
             try:
-                ruta = ex.submit(_exportar, f["uuid"], destino).result(timeout=SEGUNDOS_POR_FOTO)
+                ruta = ex.pedir("original", f["uuid"], destino, SEGUNDOS_POR_FOTO)
+                if not _es_imagen_valida(ruta):
+                    raise RuntimeError("iCloud no devolvió una imagen válida")
                 resultado[f["uuid"]] = ruta
                 seguidos = 0
                 aviso(f"  {k}/{len(fotos)} ✓ {Path(ruta).name}")
-            except TiempoAgotado:
+            except Colgado:
                 seguidos += 1
+                shutil.rmtree(destino, ignore_errors=True)
                 aviso(f"  {k}/{len(fotos)} ✗ {nombre}: iCloud no responde (se usará la previsualización)")
-                # el hilo atascado sigue en segundo plano; usamos uno nuevo para la siguiente
-                ex.shutdown(wait=False, cancel_futures=True)
-                ex = ThreadPoolExecutor(max_workers=1)
             except Exception as e:
                 seguidos += 1
                 shutil.rmtree(destino, ignore_errors=True)
@@ -148,6 +140,4 @@ def _descargar_icloud(fotos: list[dict], aviso) -> dict[str, str]:
             if seguidos >= FALLOS_SEGUIDOS:
                 aviso("⚠ iCloud no está entregando las fotos (¿sin internet?): el resto usa la previsualización.")
                 break
-    finally:
-        ex.shutdown(wait=False, cancel_futures=True)
     return resultado

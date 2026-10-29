@@ -32,9 +32,16 @@ if [ "$(uname)" = "Darwin" ]; then
 fi
 libre_gb=$(( libre_kb / 1024 / 1024 ))
 echo "Espacio libre en el disco: ${libre_gb} GB"
-if [ "$libre_kb" -lt $(( 4 * 1024 * 1024 )) ]; then
+minimo_gb=4
+# ya instalada (actualización): solo se revisan las librerías, basta con mucho menos
+[ -f .venv/.instalacion-ok ] && minimo_gb=1
+if [ "$libre_kb" -lt $(( minimo_gb * 1024 * 1024 )) ]; then
   trap - ERR
-  echo "✗ Hacen falta unos 4 GB libres (2 GB para la app + margen de seguridad)."
+  if [ "$minimo_gb" -eq 4 ]; then
+    echo "✗ Hacen falta unos 4 GB libres (2 GB para la app + margen de seguridad)."
+  else
+    echo "✗ Queda menos de 1 GB libre: no sigo para no llenar el disco."
+  fi
   echo "  Vacía la Papelera o borra descargas/vídeos grandes y vuelve a ejecutar ./instalar.sh"
   echo "  (Ajustes del Sistema → General → Almacenamiento te dice qué ocupa más)."
   exit 1

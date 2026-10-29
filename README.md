@@ -38,6 +38,19 @@ Todo se instala **dentro de la carpeta** (`.venv/`, `.python/`, `.uv/`). Para de
 
 > **Atajo con doble clic:** `Empezar.command` instala si hace falta, analiza y abre la galería. Si macOS dice que «no se puede verificar» el archivo: pulsa *Aceptar*, ve a *Ajustes del Sistema → Privacidad y seguridad*, baja hasta *Seguridad* y pulsa **Abrir igualmente** (en macOS 15 y 26 ya no sirve clic derecho → Abrir). Si lo has instalado con `./instalar.sh`, el aviso ya no aparece.
 
+### Actualizar a la última versión
+
+Si ya la tienes instalada y sale un arreglo, cierra la galería (Ctrl+C en su Terminal) y pega esto. Cambia los archivos de la app por los nuevos y **conserva** lo instalado (`.venv/`), lo analizado y tu selección (`datos/`), las láminas (`salida/`) y tu `ia.env`:
+
+```bash
+cd ~/arte-involuntario && rm -rf .nueva && mkdir .nueva \
+  && curl -fL https://github.com/xoaninc/pulse/archive/refs/heads/arte-involuntario.tar.gz | tar xz -C .nueva \
+  && cp -R .nueva/Pulse-arte-involuntario/. . \
+  && rm -rf .nueva && ./instalar.sh
+```
+
+Si tu carpeta está en otro sitio o tiene otro nombre, cambia `~/arte-involuntario` por su ruta. No vuelvas a pegar el bloque de instalación: como la carpeta ya existe, `mv` metería la versión nueva dentro de la vieja y seguirías usando la antigua.
+
 ## 3 · Analizar la fototeca
 
 ```bash
@@ -57,7 +70,7 @@ Todo se instala **dentro de la carpeta** (`.venv/`, `.python/`, `.uv/`). Para de
 | `./arte analizar --desde 2025-05-11 --hasta 2025-05-11` | solo un día (incluido) |
 | `./arte analizar --album "Viajes"` | solo un álbum |
 | `./arte analizar --carpeta ~/Desktop/fotos` | una carpeta en vez de la app Fotos |
-| `./arte analizar --modelo preciso` | modelo más fino (descarga 1,8 GB, ~3× más lento); la galería lo recordará |
+| `./arte analizar --modelo preciso` | modelo más fino (descarga 1,8 GB, ~3× más lento); la galería lo usa en cuanto termina de analizarlas todas (si lo cortas, sigue con el anterior) |
 
 ## 4 · Elegir y montar en la galería
 

@@ -24,6 +24,77 @@ def _gps(f) -> tuple[float, float] | None:
     return (f["lat"], f["lon"])
 
 
+# ---------------------------------------------------------------------- limpieza del GPS
+# Cada punto es (índice, ts, (lat, lon)).
+VEL_MAX = 15.0   # km/h: más rápido que esto no es caminar ni ir en bici
+VEL_PICO = 6.0   # km/h: un desvío de ida y vuelta más rápido que esto es un error del GPS
+PASO_MIN = 0.06  # km: lo que se mueve menos que esto entre fotos es temblor del GPS
+
+
+def _plausible(a, b) -> bool:
+    """¿Da tiempo a ir de a a b caminando o en bici?"""
+    d = km_entre(a[2], b[2])
+    return d <= 0.3 or d / max(abs(b[1] - a[1]) / 3600, 1 / 60) <= VEL_MAX
+
+
+def _sin_picos(pts: list) -> list:
+    """Quita posiciones desviadas que se van y vuelven: primero de una en una y después de dos
+    en dos (dos fotos seguidas con el mismo error). Un desvío real, como subir a una cumbre y
+    bajar por el mismo sitio, se respeta si da tiempo a hacerlo andando."""
+    for w in (1, 2):
+        out, k = pts[:1], 1
+        while k < len(pts):
+            if k + w < len(pts):
+                tramo = [out[-1]] + pts[k:k + w + 1]
+                ida_vuelta = sum(km_entre(a[2], b[2]) for a, b in zip(tramo, tramo[1:]))
+                horas = max((tramo[-1][1] - tramo[0][1]) / 3600, 1 / 60)
+                if ida_vuelta > 3 * km_entre(tramo[0][2], tramo[-1][2]) + 0.4 and ida_vuelta / horas > VEL_PICO:
+                    k += w
+                    continue
+            out.append(pts[k])
+            k += 1
+        pts = out
+    return pts
+
+
+def _sin_extremos_raros(pts: list) -> list:
+    """La primera foto (o las dos primeras) a veces lleva la posición de antes de abrir la cámara,
+    a kilómetros. Si no da tiempo a llegar desde ahí y lo que sigue sí encaja, se descarta.
+    Lo mismo con las últimas."""
+    for _ in range(2):
+        for n in (1, 2):
+            if len(pts) > n + 1 and not _plausible(pts[n - 1], pts[n]) and _plausible(pts[n], pts[n + 1]):
+                pts = pts[n:]
+                break
+        pts = pts[::-1]
+    return pts
+
+
+def _desvio(a, g, b) -> float:
+    """Km de g a la recta que une a y b (o a a, si a y b coinciden)."""
+    c = math.cos(math.radians(a[0]))
+    bx, by = (b[1] - a[1]) * c, b[0] - a[0]
+    gx, gy = (g[1] - a[1]) * c, g[0] - a[0]
+    largo = math.hypot(bx, by)
+    return 111.2 * (abs(gx * by - gy * bx) / largo if largo > 1e-5 else math.hypot(gx, gy))
+
+
+def _suavizar(pts: list) -> list:
+    """Si el temblor del GPS es comparable a lo que se avanza de foto a foto (fotos muy seguidas),
+    cada posición pasa a ser la mediana de 3 (lat y lon por separado). Con fotos espaciadas no se
+    toca, para no recortar curvas ni cumbres."""
+    if len(pts) < 5:
+        return pts
+    temblor = float(np.median([_desvio(pts[k - 1][2], pts[k][2], pts[k + 1][2]) for k in range(1, len(pts) - 1)]))
+    paso = float(np.median([km_entre(a[2], b[2]) for a, b in zip(pts, pts[1:])]))
+    if temblor <= 0.2 * paso:
+        return pts
+    med = [(pts[k][0], pts[k][1], (sorted(p[2][0] for p in pts[k - 1:k + 2])[1],
+                                   sorted(p[2][1] for p in pts[k - 1:k + 2])[1]))
+           for k in range(1, len(pts) - 1)]
+    return [pts[0]] + med + [pts[-1]]
+
+
 def _hora(f) -> str:
     try:
         return datetime.fromisoformat(f["fecha"]).strftime("%H:%M")
@@ -116,31 +187,25 @@ class Paseos:
         return sesiones
 
     def _traza(self, idx: list[int]) -> list[tuple[int, float]]:
-        """(índice, km acumulados) de las fotos con GPS fiable. Descarta picos (una posición
-        desviada que va y vuelve) y velocidades imposibles a pie, y no suma el temblor del GPS
-        (pasos de menos de 40 m)."""
+        """(índice, km acumulados) de las fotos con GPS fiable. Descarta picos (una o dos
+        posiciones desviadas que van y vuelven), una primera o última posición a la que no da
+        tiempo a llegar y velocidades imposibles a pie; suaviza el temblor del GPS cuando las
+        fotos están muy seguidas y no suma pasos de menos de 60 m."""
         fotos = self.ix.fotos
-        con = [(i, _gps(fotos[i])) for i in idx if _gps(fotos[i])]
-        buenos = []
-        for k, (i, g) in enumerate(con):
-            if 0 < k < len(con) - 1:
-                a, b = con[k - 1][1], con[k + 1][1]
-                if km_entre(a, g) + km_entre(g, b) > 3 * km_entre(a, b) + 0.4:
-                    continue  # pico: se va y vuelve
-            if buenos:
-                j, h = buenos[-1]
-                horas = max((fotos[i]["ts"] - fotos[j]["ts"]) / 3600, 1 / 60)
-                if km_entre(h, g) / horas > 15 and km_entre(h, g) > 0.3:
-                    continue  # más rápido que caminando o en bici
-            buenos.append((i, g))
+        pts = [(i, fotos[i]["ts"], _gps(fotos[i])) for i in idx if _gps(fotos[i])]
+        buenos: list = []
+        for p in _sin_extremos_raros(_sin_picos(pts)):
+            if buenos and not _plausible(buenos[-1], p):
+                continue  # más rápido que caminando o en bici
+            buenos.append(p)
         out: list[tuple[int, float]] = []
         total, ultimo = 0.0, None
-        for i, g in buenos:
+        for i, _, g in _suavizar(buenos):
             if ultimo is None:
                 ultimo = g
             else:
                 d = km_entre(ultimo, g)
-                if d >= 0.04:
+                if d >= PASO_MIN:
                     total += d
                     ultimo = g
             out.append((i, total))

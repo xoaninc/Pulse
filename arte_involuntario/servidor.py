@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import mimetypes
+import os
 import subprocess
 import sys
 import threading
@@ -113,6 +114,11 @@ class App:
         return datos
 
     # -- API ---------------------------------------------------------------
+    def quien(self) -> dict:
+        """Qué galería es esta (carpeta, datos y modelo): para no reutilizar otra al arrancar."""
+        return {"app": "arte-involuntario", "raiz": str(rutas.RAIZ), "datos": str(rutas.DATOS.resolve()),
+                "modelo": {"preset": self.preset, "clave": self.clave}}
+
     def estado(self) -> dict:
         cfg = self.tx.cfg
         fuertes = self.pt.resumen()
@@ -222,6 +228,14 @@ def _fichero(h, ruta: Path, raiz: Path):
     _bytes(h, ruta.read_bytes(), tipo, cache=False)
 
 
+def _guardar_del_navegador(b: dict) -> int:
+    """Guarda la selección que manda el navegador. `_rev` es la versión que tenía; `_aviso`
+    (p. ej. «la selección guardada estaba dañada…») solo viaja del servidor al navegador."""
+    rev = b.pop("_rev", None)
+    b.pop("_aviso", None)
+    return generar.guardar_seleccion(b, rev)
+
+
 def crear_handler(app: App):
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -258,6 +272,8 @@ def crear_handler(app: App):
             if p.startswith("/mini/"):
                 datos = app.miniatura(unquote(p[6:]), int(q.get("s", 360)))
                 return _bytes(self, datos, "image/jpeg") if datos else self.send_error(404)
+            if p == "/api/quien":
+                return _json(self, app.quien())
             if p == "/api/estado":
                 return _json(self, app.estado())
             if p == "/api/candidatas":
@@ -290,9 +306,8 @@ def crear_handler(app: App):
         def _post(self, b: dict):
             p = urlparse(self.path).path
             if p == "/api/seleccion":
-                rev = b.pop("_rev", None)
                 try:
-                    nueva = generar.guardar_seleccion(b, rev)
+                    nueva = _guardar_del_navegador(b)
                 except generar.Conflicto:
                     return _json(self, {"error": "conflicto", "seleccion": generar.leer_seleccion()}, 409)
                 return _json(self, {"ok": True, "_rev": nueva})
@@ -302,15 +317,16 @@ def crear_handler(app: App):
                 r = app.pa.por_rango(d0, d1)
                 return _json(self, app.pa.publico(r) if r else {"error": "No hay fotos en ese intervalo"})
             if p == "/api/generar":
+                nueva = None
                 if b:
-                    rev = b.pop("_rev", None)
                     try:
-                        generar.guardar_seleccion(b, rev)
+                        nueva = _guardar_del_navegador(b)
                     except generar.Conflicto:
                         return _json(self, {"error": "conflicto", "seleccion": generar.leer_seleccion()}, 409)
                 sel = generar.leer_seleccion()
                 ok = app.trabajo_generar.lanzar(lambda aviso: generar.generar(sel, aviso=aviso))
-                return _json(self, {"ok": ok})
+                # la _rev nueva vuelve al navegador: sin ella, su siguiente guardado parecería de otra pestaña
+                return _json(self, {"ok": ok, "_rev": nueva})
             if p == "/api/ia/revisar":
                 cats = b.get("categorias") or app.pt.cats
                 n = int(b.get("n", 30))
@@ -340,20 +356,47 @@ def crear_handler(app: App):
     return H
 
 
-def _ya_abierta(puerto: int) -> bool:
+def _galeria_en(puerto: int) -> dict | None:
+    """Quién escucha en ese puerto: la identidad de la galería (/api/quien), {} si responde otro
+    programa o una galería de una versión anterior, o None si no hay nadie."""
+    import urllib.error
     import urllib.request
 
+    sin_proxy = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 127.0.0.1 nunca va por un proxy
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{puerto}/api/estado", timeout=1.5) as r:
-            return r.status == 200 and b"categorias" in r.read(4000)
+        with sin_proxy.open(f"http://127.0.0.1:{puerto}/api/quien", timeout=3) as r:
+            d = json.loads(r.read())
+            return d if isinstance(d, dict) and d.get("app") == "arte-involuntario" else {}
+    except urllib.error.HTTPError:
+        return {}
     except Exception:
-        return False
+        return None
+
+
+def _es_esta(d: dict, preset: str) -> bool:
+    """¿Es la galería de esta misma carpeta, con los mismos datos y el mismo modelo?"""
+    return (d.get("raiz") == str(rutas.RAIZ) and d.get("datos") == str(rutas.DATOS.resolve())
+            and (d.get("modelo") or {}).get("clave") == clave_modelo(preset))
+
+
+def _galerias_abiertas(puertos, preset: str) -> tuple[int | None, list[tuple[int, dict]]]:
+    """(puerto de una galería igual a esta ya abierta o None, [(puerto, identidad) de las demás])."""
+    otras = []
+    for p in puertos:
+        d = _galeria_en(p)
+        if d is None:
+            continue
+        if _es_esta(d, preset):
+            return p, otras
+        otras.append((p, d))
+    return None, otras
 
 
 def servir(preset: str, puerto: int = 8765, abrir: bool = True):
     rutas.preparar()
-    if _ya_abierta(puerto):
-        url = f"http://127.0.0.1:{puerto}/"
+    misma, otras = _galerias_abiertas(range(puerto, puerto + 10), preset)
+    if misma is not None:
+        url = f"http://127.0.0.1:{misma}/"
         print(f"La galería ya está abierta en {url} (en otra ventana de Terminal). La abro en el navegador.")
         if abrir:
             webbrowser.open(url)
@@ -368,11 +411,28 @@ def servir(preset: str, puerto: int = 8765, abrir: bool = True):
             continue
     else:
         raise SystemExit("No encuentro un puerto libre")
-    url = f"http://127.0.0.1:{srv.server_address[1]}/"
+    real = srv.server_address[1]
+    antes = [(p, d) for p, d in otras if p < real]
+    for p, d in antes:
+        if d:
+            print(f"\n⚠ En el puerto {p} hay otra galería abierta, de otra carpeta o con otro modelo "
+                  f"(datos: {d.get('datos', '?')} · modelo: {(d.get('modelo') or {}).get('preset', '?')}).")
+        else:
+            print(f"\n⚠ El puerto {p} lo usa otro programa o una galería de una versión anterior.")
+    if antes:
+        print(f"  Por eso abro esta en el puerto {real}. Si la otra no la usas, ciérrala con Ctrl+C en su ventana de Terminal.")
+    url = f"http://127.0.0.1:{real}/"
     print(f"\n  Galería abierta en {url}\n  (deja esta ventana abierta; Ctrl+C para cerrar)\n")
     if abrir:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("\nHasta luego.")
+        print("\nHasta luego.", flush=True)
+        # salir ya: si el modelo aún se carga en otro hilo, el cierre normal de Python aborta con un
+        # «terminate called…» que asusta. os._exit no ejecuta atexit: antes, cerrar los procesos de Fotos
+        from . import exportar_photokit
+
+        exportar_photokit._matar_vivos()
+        sys.stderr.flush()
+        os._exit(0)

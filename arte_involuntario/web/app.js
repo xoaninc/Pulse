@@ -61,33 +61,50 @@ function pieDefecto(d) {
   return [d.lugar, mesAnio(d.fecha)].filter(Boolean).join(" · ");
 }
 let toastT;
-function toast(msg) {
+function toast(msg, ms = 2600) {
   let t = $("#toast");
   if (!t) { t = h("div", { id: "toast", style: "position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#1d1b19;color:#fff;padding:9px 16px;border-radius:99px;z-index:60;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.25)" }); document.body.append(t); }
   t.textContent = msg; t.style.display = "block";
-  clearTimeout(toastT); toastT = setTimeout(() => (t.style.display = "none"), 2600);
+  clearTimeout(toastT); toastT = setTimeout(() => (t.style.display = "none"), ms);
 }
 let guardarT = null;
-async function guardarAhora() {
-  guardarT = null;
-  const r = await fetch("/api/seleccion", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(S.sel) });
+// Los envíos de la selección van de uno en uno: cada uno lleva la _rev que devolvió el anterior
+// (si salieran dos a la vez, el segundo llevaría una _rev vieja y parecería de otra pestaña).
+let cola = Promise.resolve(), enCamino = 0;
+function enCola(fn) {
+  enCamino++;
+  const p = cola.then(fn).finally(() => enCamino--);
+  cola = p.catch(() => {});
+  return p;
+}
+// Manda S.sel a /api/seleccion o /api/generar y apunta la _rev nueva.
+// Devuelve la respuesta, o null si había conflicto (ya se ha cargado la versión del disco).
+async function enviarSel(ruta) {
+  const r = await fetch(ruta, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(S.sel) });
   const d = await r.json().catch(() => ({}));
   if (r.status === 409 && d.seleccion) {
     // otra pestaña (u otra galería) cambió la selección después: manda la más reciente
-    toast("La selección se cambió en otra pestaña: cargo la versión más reciente.");
     S.sel = normalizarSel(d.seleccion);
     repintarTodo();
-    return;
+    return null;
   }
-  if (!r.ok) throw new Error(d.error || `Error ${r.status}`);
-  S.sel._rev = d._rev;
+  if (!r.ok || d.error) throw new Error(d.error || `Error ${r.status}`);
+  if (d._rev != null) S.sel._rev = d._rev;
+  return d;
+}
+async function guardarAhora() {
+  guardarT = null;
+  try {
+    if (!(await enCola(() => enviarSel("/api/seleccion")))) toast("La selección se cambió en otra pestaña: cargo la versión más reciente.");
+  } catch (e) { toast("No se pudo guardar: " + e.message); }
 }
 function guardar() {
   clearTimeout(guardarT);
-  guardarT = setTimeout(() => guardarAhora().catch(e => toast("No se pudo guardar: " + e.message)), 350);
+  guardarT = setTimeout(guardarAhora, 350);
   contadores();
 }
 function normalizarSel(sel) {
+  delete sel._aviso;   // solo viaja del servidor al navegador (ver iniciar): nunca se devuelve
   sel.arte = sel.arte || [];
   sel.paseo = Object.assign({ id: null, titulo: "", linea: "", fotos: [], mayusculas: true, dibujo: true, datos: true, diseno: "rejilla", k: 12 }, sel.paseo || {});
   sel.opciones = Object.assign({ orden: "categoria", contraste: "normal", cabecera: true, sin_descargar: false }, sel.opciones || {});
@@ -107,7 +124,7 @@ addEventListener("pagehide", () => {
 });
 // al volver a esta pestaña, traer la selección por si se cambió en otra
 document.addEventListener("visibilitychange", async () => {
-  if (document.visibilityState !== "visible" || guardarT || !S.sel) return;
+  if (document.visibilityState !== "visible" || guardarT || enCamino || !S.sel) return;
   const d = await api("/api/seleccion").catch(() => null);
   if (d && (d._rev || 0) > (S.sel._rev || 0)) { S.sel = normalizarSel(d); repintarTodo(); }
 });
@@ -117,12 +134,16 @@ async function iniciar() {
   S.estado = await api("/api/estado");
   S.cats = S.estado.categorias;
   S.cats.forEach(c => (S.nombres[c.id] = c.nombre));
-  S.sel = normalizarSel(await api("/api/seleccion"));
+  const sel = await api("/api/seleccion");
+  // si seleccion.json estaba dañado, el servidor lo aparta y manda una vacía con `_aviso`
+  const aviso = sel._aviso;
+  S.sel = normalizarSel(sel);
   const est = S.estado.estadisticas || {};
   $("#estado-global").innerHTML = `${S.estado.fotos.toLocaleString("es-ES")} fotos analizadas · modelo ${S.estado.modelo.nombre}` +
     (est.sin_imagen_local ? ` · ${est.sin_imagen_local} solo en iCloud` : "") +
     (S.estado.ia ? ` · IA: ${S.estado.ia.modelo.split("/").pop()}` : "");
-  if (S.estado.ia_problema) setTimeout(() => toast(S.estado.ia_problema), 1200);
+  if (aviso) toast(aviso, 12000);
+  if (S.estado.ia_problema) setTimeout(() => toast(S.estado.ia_problema), aviso ? 12500 : 1200);
   $$("nav button").forEach(b => b.addEventListener("click", () => cambiarTab(b.dataset.tab)));
   $("#btn-buscar").onclick = () => buscar($("#busqueda").value.trim());
   $("#busqueda").addEventListener("keydown", e => { if (e.key === "Enter") buscar(e.target.value.trim()); });
@@ -174,6 +195,9 @@ function pintarCategorias() {
     h("div", {}, h("div", { class: "nombre" }, "★ Lo más «Clément»"), h("div", { class: "info" }, "las mejores de todas las categorías"))));
 }
 
+// la definición va entre comillas latinas, salvo que categorias.json ya las traiga
+const cita = t => (!t || t.startsWith("«")) ? t : `«${t}»`;
+
 function recortar(t, n) {
   if (!t || t.length <= n) return t;
   const corte = t.lastIndexOf(" ", n - 1);
@@ -184,12 +208,13 @@ async function elegirCategoria(id) {
   turno++; cargando = false;
   S.vista = "cat"; S.catActiva = id; S.desde = 0; S.lista = []; S.catChip = null;
   const c = S.cats.find(x => x.id === id);
+  const def = (c.definicion || "").trim();
   $("#cab-categoria").innerHTML = "";
   $("#cab-categoria").append(
     h("h2", {}, c.nombre),
-    c.definicion && c.definicion.length > 420
-      ? h("details", { class: "def" }, h("summary", {}, `«${recortar(c.definicion, 300)}»`), c.definicion)
-      : h("div", { class: "def" }, c.definicion ? `«${c.definicion}»` : ""),
+    def.length > 420
+      ? h("details", { class: "def" }, h("summary", {}, cita(recortar(def, 300))), cita(def))
+      : h("div", { class: "def" }, cita(def)),
     h("p", { class: "ayuda" }, recortar(c.descripcion || "", 260)),
     c.consejos && c.consejos.length ? h("details", {}, h("summary", {}, "Qué buscar"), h("ul", {}, c.consejos.map(x => h("li", {}, x)))) : "");
   pintarSugerencias(c);
@@ -610,7 +635,7 @@ function pintarPaseo() {
   r.todas.forEach((f, i) => {
     const k = elegidas.indexOf(f.uuid);
     const t = h("div", { class: "tarjeta" + (k >= 0 ? " elegida" : "") + (f.util ? "" : " no-util") },
-      h("div", { class: "img", style: `background-image:url('${mini(f.uuid)}')`, onclick: () => alternarPaseo(f) }),
+      h("div", { class: "img", style: `background-image:url('${mini(f.uuid)}')`, title: k >= 0 ? "Quitar del paseo" : "Añadir al paseo", onclick: () => alternarPaseo(f) }),
       k >= 0 ? h("span", { class: "num-sel" }, k === 0 ? "ORIGEN" : (k === elegidas.length - 1 ? "FINAL" : String(k + 1).padStart(2, "0"))) : "",
       h("div", { class: "pie" }, h("div", {}, [f.hora, f.km != null ? `km ${num(f.km)}` : "", f.suceso ? f.suceso.palabra.toLowerCase() : ""].filter(Boolean).join(" · "))));
     grid.append(t);
@@ -618,11 +643,24 @@ function pintarPaseo() {
   pintarEditorPaseo();
 }
 
+// fotos quitadas del paseo con su frase o su recorte: al volver a añadirlas se recuperan
+const quitadasPaseo = {};
 function alternarPaseo(f) {
   const P = S.sel.paseo;
   const i = P.fotos.findIndex(x => x.uuid === f.uuid);
-  if (i >= 0) P.fotos.splice(i, 1);
-  else { P.fotos.push(nuevaFotoPaseo(f)); ordenarPaseo(); }
+  if (i >= 0) {
+    const x = P.fotos[i];
+    if (fraseEditada(x) || recorteTocado(x)) {
+      const que = [fraseEditada(x) ? `tu frase «${x.frase.trim()}»` : "", recorteTocado(x) ? "tu recorte" : ""].filter(Boolean).join(" y ");
+      if (!confirm(`Esta foto tiene ${que}. ¿Quitarla del paseo?\n(Si vuelves a hacer clic en ella, lo recuperas.)`)) return;
+      quitadasPaseo[x.uuid] = x;
+    }
+    P.fotos.splice(i, 1);
+  } else {
+    P.fotos.push(quitadasPaseo[f.uuid] || nuevaFotoPaseo(f));
+    delete quitadasPaseo[f.uuid];
+    ordenarPaseo();
+  }
   guardar();
   pintarPaseo();
 }
@@ -706,13 +744,29 @@ async function generarLaminas() {
   const log = $("#log-generar");
   log.classList.remove("oculto"); log.textContent = "Empezando…";
   $("#resultado").innerHTML = "";
-  try { await post("/api/generar", S.sel); } catch (e) { toast(e.message); btn.disabled = false; return; }
+  // lo que quedaba por guardar va dentro de este envío, en la cola de guardados (lleva la _rev al día)
+  clearTimeout(guardarT); guardarT = null;
+  const parar = msg => { toast(msg, 6000); log.classList.add("oculto"); btn.disabled = false; };
+  let r0;
+  try { r0 = await enCola(() => enviarSel("/api/generar")); }
+  catch (e) { parar("No se pudo generar: " + e.message); return; }
+  if (!r0) { parar("La selección cambió en otra pestaña: la he cargado aquí. Revísala y vuelve a pulsar Generar."); return; }
+  if (!r0.ok) toast("Ya se estaban generando las láminas (con la selección de antes): cuando acabe, vuelve a pulsar Generar.", 6000);
+  let fin = false;   // una consulta lenta no debe pintar el resultado dos veces
   const t = setInterval(async () => {
-    const d = await api("/api/generar");
+    let d;
+    try { d = await api("/api/generar"); }
+    catch (e) {
+      if (fin) return;
+      fin = true; clearInterval(t); btn.disabled = false;
+      log.textContent += "\nSe ha perdido la conexión con la galería: ¿se ha cerrado la ventana de Terminal?";
+      return;
+    }
+    if (fin) return;
     log.textContent = d.log.join("\n") || "Trabajando…";
     log.scrollTop = log.scrollHeight;
     if (d.estado === "trabajando") return;
-    clearInterval(t);
+    fin = true; clearInterval(t);
     btn.disabled = false;
     if (d.estado === "error") { log.textContent = d.log.join("\n") || "Ha fallado la generación."; return; }
     log.textContent = (d.log.join("\n") || "") + (d.log.length ? "\n" : "") + "Hecho.";

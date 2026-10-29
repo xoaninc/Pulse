@@ -36,13 +36,35 @@ def _fecha(s: str | None, fin: bool = False):
     return dt.astimezone()
 
 
-def _modelo_de(a) -> str:
-    """El modelo indicado, o el último con el que se analizó."""
+def _modelo_recordado(avisar: bool = False) -> str:
+    """El último modelo con el que se terminó de analizar. Si no tiene ninguna foto de la fuente
+    actual (p. ej. se cortó el primer análisis, hecho con otro modelo), el que tenga más."""
     from . import indice
+    from .modelo import PRESETS, clave_modelo
 
+    m = indice.modelo_usado() or "rapido"
+    if not rutas.BD.exists():
+        return m
+    analizadas = indice.estadisticas()["analizadas"]
+    try:
+        if analizadas.get(clave_modelo(m)):
+            return m
+    except ValueError:
+        pass
+    clave, n = max(analizadas.items(), key=lambda kv: kv[1], default=(None, 0))
+    if not n:
+        return m
+    otro = next((p for p in PRESETS if clave_modelo(p) == clave), clave)
+    if avisar:
+        print(f"(No hay fotos analizadas con el modelo «{m}»: uso «{otro}», que tiene {n}.)")
+    return otro
+
+
+def _modelo_de(a, avisar: bool = False) -> str:
+    """El modelo indicado, o el último con el que se analizó."""
     if getattr(a, "modelo", None):
         return a.modelo
-    return indice.modelo_usado() or "rapido"
+    return _modelo_recordado(avisar)
 
 
 def cmd_analizar(a) -> None:
@@ -51,6 +73,7 @@ def cmd_analizar(a) -> None:
 
     rutas.preparar()
     a.modelo = _modelo_de(a)
+    clave_modelo(a.modelo)  # un --modelo mal escrito se avisa antes de leer toda la fototeca
     print(f"Espacio libre: {rutas.legible(disco.libre())}")
     desde, hasta = _fecha(a.desde), _fecha(a.hasta, fin=True)
     if a.carpeta:
@@ -93,16 +116,26 @@ def cmd_analizar(a) -> None:
     disco.comprobar(r["fotos"] * 2048, "guardar el índice", margen=disco.MARGEN_PEQUENO)
     modelo = Modelo(a.modelo)
     res = indice.vectorizar(modelo, lote=a.lote)
-    indice.guardar_modelo_usado(a.modelo)
     est = indice.estadisticas()
     print(f"✓ Analizadas {est['analizadas'].get(modelo.clave, 0)} fotos ({res['errores']} con error).")
-    print("  Siguiente paso:  ./arte galeria")
+    if not indice.pendientes(modelo.clave):
+        indice.guardar_modelo_usado(a.modelo)
+        print("  Siguiente paso:  ./arte galeria")
+        return
+    # cortado a medias (o solo una parte de la fototeca): la galería no cambia de modelo sola
+    previo = _modelo_recordado()
+    if previo != a.modelo:
+        print(f"  (La galería sigue usando «{previo}» hasta que termines de analizar con «{a.modelo}»: "
+              f"./arte analizar --modelo {a.modelo}\n"
+              f"   Para ver ya lo analizado con «{a.modelo}»:  ./arte galeria --modelo {a.modelo})")
+    else:
+        print("  Para seguir analizando:  ./arte analizar  ·  la galería ya funciona con lo analizado:  ./arte galeria")
 
 
 def cmd_galeria(a) -> None:
     from .servidor import servir
 
-    servir(_modelo_de(a), a.puerto, abrir=not a.no_abrir)
+    servir(_modelo_de(a, avisar=True), a.puerto, abrir=not a.no_abrir)
 
 
 def cmd_laminas(a) -> None:
@@ -126,7 +159,7 @@ def cmd_estado(a) -> None:
     for m, n in est["analizadas"].items():
         print(f"  analizadas con {m}: {n}")
     print(f"  con error al abrir: {est['errores']}")
-    print(f"  modelo de la galería: {indice.modelo_usado() or 'rapido'}")
+    print(f"  modelo de la galería: {_modelo_recordado()}")
     print("Espacio:")
     for k, v in disco.resumen().items():
         print(f"  {k:18s} {rutas.legible(v)}")
@@ -147,6 +180,12 @@ def cmd_limpiar(a) -> None:
             p.unlink()
 
     borrar(rutas.TEXTOS_CACHE)
+    # temporales de una generación cortada (Terminal cerrada a medias); solo los de más de 1 h,
+    # para no tocar el de una galería que esté generando ahora mismo
+    for p in rutas.SALIDA.glob(".generando-*"):
+        if time.time() - p.stat().st_mtime > 3600:
+            borrar(p)
+    aviso = None
     if a.todo:
         for p in (rutas.ORIGINALES, rutas.MINIATURAS_ICLOUD, rutas.MODELOS, rutas.BD,
                   rutas.BD.with_suffix(".sqlite-wal"), rutas.BD.with_suffix(".sqlite-shm")):
@@ -156,15 +195,19 @@ def cmd_limpiar(a) -> None:
         # que forman parte del índice)
         try:
             sel = leer_seleccion()
-            usar = {x["uuid"] for x in sel.get("arte", [])} | {x["uuid"] for x in sel.get("paseo", {}).get("fotos", [])}
-        except Exception:
-            usar = set()
-        if rutas.ORIGINALES.exists():
+        except Exception as e:
+            sel = {"_aviso": str(e)}
+        aviso = sel.get("_aviso")
+        usar = {x["uuid"] for x in sel.get("arte", [])} | {x["uuid"] for x in sel.get("paseo", {}).get("fotos", [])}
+        if aviso:
+            # sin saber qué fotos tenías elegidas no se borra ningún original (bajarlos otra vez de iCloud cuesta)
+            print(f"⚠ {aviso}\n  Por si acaso, no borro ningún original descargado.")
+        elif rutas.ORIGINALES.exists():
             for d in rutas.ORIGINALES.iterdir():
                 if d.is_dir() and d.name not in usar:
                     borrar(d)
     print(f"Liberados {rutas.legible(liberado)}.")
-    if not a.todo:
+    if not a.todo and not aviso:
         print("Se conservan el modelo, el índice, tu selección, sus originales y las láminas.\n"
               "Para borrarlo todo menos la selección y las láminas: ./arte limpiar --todo")
 
@@ -173,7 +216,8 @@ def cmd_todo(a) -> None:
     from . import indice
     from .modelo import clave_modelo
 
-    a.modelo = _modelo_de(a)
+    a.modelo = _modelo_de(a, avisar=True)
+    clave_modelo(a.modelo)  # un --modelo mal escrito se avisa antes de leer toda la fototeca
     ultima = indice.ultima_lectura()
     reciente = ultima and time.time() - ultima < HORAS_RELECTURA * 3600
     if reciente and indice.estadisticas()["analizadas"].get(clave_modelo(a.modelo)) and not a.releer:
@@ -181,6 +225,9 @@ def cmd_todo(a) -> None:
               " Para buscar fotos nuevas: ./arte analizar   o   ./arte todo --releer)")
     else:
         cmd_analizar(a)
+        # análisis cortado a medias: la galería sigue con el modelo anterior, como acaba de avisar cmd_analizar
+        if indice.pendientes(clave_modelo(a.modelo)) and _modelo_recordado() != a.modelo:
+            a.modelo = None
     cmd_galeria(a)
 
 

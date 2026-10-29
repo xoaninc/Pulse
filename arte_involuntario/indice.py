@@ -253,8 +253,12 @@ def estadisticas() -> dict:
     con = conectar()
     total = con.execute("SELECT COUNT(*) FROM fotos").fetchone()[0]
     sin = con.execute("SELECT COUNT(*) FROM fotos WHERE json_extract(datos,'$.ruta_analisis') IS NULL").fetchone()[0]
-    por_modelo = dict(con.execute("SELECT modelo, COUNT(v) FROM vectores GROUP BY modelo").fetchall())
-    errores = con.execute("SELECT COUNT(*) FROM vectores WHERE v IS NULL").fetchone()[0]
+    # solo las fotos de la fuente actual: los vectores de otra carpeta o fototeca se guardan
+    # (volver a ella es instantáneo) pero no cuentan
+    por_modelo = dict(con.execute(
+        "SELECT v.modelo, COUNT(v.v) FROM vectores v JOIN fotos f ON f.uuid = v.uuid GROUP BY v.modelo").fetchall())
+    errores = con.execute(
+        "SELECT COUNT(*) FROM vectores v JOIN fotos f ON f.uuid = v.uuid WHERE v.v IS NULL").fetchone()[0]
     fuente = _meta(con, "fuente")
     con.close()
     return {"fotos": total, "sin_imagen_local": sin, "analizadas": por_modelo, "errores": errores, "fuente": fuente}

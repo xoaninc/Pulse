@@ -73,8 +73,12 @@ def abrir(ruta: str | Path, lado_max: int | None = None, color: bool = False) ->
 
 def miniatura_jpeg(ruta: str | Path, lado: int = 400, calidad: int = 82) -> bytes:
     im = abrir(ruta, lado)
+    # se conserva el perfil (Display P3 en las fotos del iPhone): sin él el navegador las toma por
+    # sRGB y se ven apagadas. Solo perfiles RGB: uno CMYK o de grises no vale para un JPEG en RGB.
+    icc = im.info.get("icc_profile")
+    extra = {"icc_profile": icc} if icc and icc[16:20] == b"RGB " else {}
     buf = io.BytesIO()
-    im.save(buf, "JPEG", quality=calidad, optimize=True)
+    im.save(buf, "JPEG", quality=calidad, optimize=True, **extra)
     return buf.getvalue()
 
 
