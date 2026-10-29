@@ -1,0 +1,20 @@
+# Tu musica y lo que generan los comandos no se suben al repositorio
+EchoMini/
+*.flac
+*.mp3
+*.m4a
+*.wav
+*.ape
+*.ogg
+*.wma
+*.dsf
+*.dff
+*.lrc
+!ejemplos/*.lrc
+*.m3u
+*.m3u8
+_backup_lrc/
+covers_out/
+informe_echomini.md
+*_revision.txt
+__pycache__/

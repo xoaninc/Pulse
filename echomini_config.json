@@ -1,0 +1,12 @@
+{
+  "_notas": "Ajustes de echomini_tool.py. Los limites de playlists salen del analisis del firmware V4.0.0 (no probados en el aparato).",
+  "music_dir": "Music",
+  "playlist_dir": "Playlists",
+  "audio_ext": [".flac", ".mp3", ".m4a", ".wav", ".ape", ".ogg", ".wma", ".aac", ".dsf", ".dff"],
+  "max_component_chars": 63,
+  "max_components": 5,
+  "max_line_chars": 259,
+  "max_tracks": 500,
+  "cover_max_px": 500,
+  "capacity_gb": 8
+}
