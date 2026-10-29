@@ -19,6 +19,7 @@ Pasos:
   ./arte estado          qué hay analizado y cuánto ocupa
   ./arte limpiar         borra cachés y descargas que ya no se usan (con --todo, también modelo e índice)
   ./arte todo            analizar (si hace falta) + galeria
+  ./arte informe         prepara imágenes de lo que propone la app para pedir ayuda o dar ideas
 """
 
 HORAS_RELECTURA = 12  # `todo` no vuelve a leer la fototeca si se leyó hace menos de esto
@@ -212,6 +213,21 @@ def cmd_limpiar(a) -> None:
               "Para borrarlo todo menos la selección y las láminas: ./arte limpiar --todo")
 
 
+def cmd_informe(a) -> None:
+    from . import informe
+    from .servidor import App
+
+    rutas.preparar()
+    app = App(_modelo_de(a, avisar=True))
+    print("· Preparando el informe…")
+    ficheros = informe.crear(app)
+    print(f"✓ Informe en {rutas.SALIDA / 'informe'}:")
+    for f in ficheros:
+        print(f"  {f.name}")
+    print("Arrastra al chat las imágenes que quieras (y pega resumen.txt). Solo salen de tu Mac si tú las envías.")
+    informe.abrir_carpeta()
+
+
 def cmd_todo(a) -> None:
     from . import indice
     from .modelo import clave_modelo
@@ -270,6 +286,10 @@ def main(argv=None) -> None:
     p = sub.add_parser("limpiar", help="libera espacio")
     p.add_argument("--todo", action="store_true", help="borra también el modelo descargado, el índice y los originales")
     p.set_defaults(fn=cmd_limpiar)
+
+    p = sub.add_parser("informe", help="imágenes de las candidatas de cada categoría, la selección y los paseos")
+    comunes(p)
+    p.set_defaults(fn=cmd_informe)
 
     p = sub.add_parser("todo", help="analizar (si hace falta) y abrir la galería")
     comunes(p)

@@ -152,6 +152,14 @@ Usa el modelo de visión de Groq `qwen/qwen3.8-27b`. Solo se envían **miniatura
 5. **Caminatas** (`paseos.py`). Agrupa las fotos por huecos de tiempo y saltos de GPS (ignorando posiciones erróneas), mide los km y el porcentaje de paisaje natural, y elige fotos repartidas en el tiempo.
 6. **Láminas** (`laminas.py`). La maqueta se define en milímetros y se dibuja en PDF vectorial (reportlab, con fuentes incrustadas) y en JPG. Las fotos del iPhone pasan de Display P3 a sRGB para que no salgan apagadas. El blanco y negro protege las sombras para imprimir en reprografía. En el Mac usa **Futura**, la tipografía de Fulton.
 
+## Pedir ayuda o dar ideas
+
+```bash
+./arte informe
+```
+
+Crea `salida/informe/` y lo abre en Finder. Dentro hay una imagen por categoría con sus 30 primeras candidatas (en verde las que has elegido), otra con tu selección y otra con los paseos detectados, más `resumen.txt` con los números. No envía nada: compartes tú las imágenes que quieras.
+
 ## Problemas frecuentes
 
 - **«macOS no deja leer la fototeca»** → falta el *Acceso total al disco* para la Terminal (paso 1). Después cierra la Terminal con ⌘Q y vuelve a abrirla.
