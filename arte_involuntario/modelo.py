@@ -27,8 +27,8 @@ class Preset:
 PRESETS: dict[str, Preset] = {
     "rapido": Preset("rapido", "MobileCLIP2-S2", "dfndr2b", 420,
                      "MobileCLIP2-S2 de Apple: rápido y ligero, buena precisión."),
-    "preciso": Preset("preciso", "MobileCLIP2-S3", "dfndr2b", 1000,
-                      "MobileCLIP2-S3 de Apple: algo más fino, ~1,5x más lento, descarga 1 GB."),
+    "preciso": Preset("preciso", "MobileCLIP2-S4", "dfndr2b", 1800,
+                      "MobileCLIP2-S4 de Apple: el que más acierta en las pruebas, ~3x más lento, descarga 1,8 GB."),
 }
 PRESET_POR_DEFECTO = "rapido"
 

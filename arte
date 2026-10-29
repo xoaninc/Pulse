@@ -1,8 +1,9 @@
 #!/bin/bash
 # Lanzador: ./arte analizar | galeria | laminas | estado | limpiar | todo
 DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ ! -x "$DIR/.venv/bin/python" ]; then
-  echo "Primero hay que instalar: ejecuta  ./instalar.sh"
+if [ ! -x "$DIR/.venv/bin/python" ] || [ ! -f "$DIR/.venv/.instalacion-ok" ]; then
+  echo "La instalación no está completa (o no se ha hecho todavía). Ejecuta:  ./instalar.sh"
+  echo "(Si se cortó antes, aprovecha lo ya descargado.)"
   exit 1
 fi
 cd "$DIR"

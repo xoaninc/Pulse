@@ -1,8 +1,10 @@
-.venv/
-.python/
-datos/
-salida/
-ia.env
-__pycache__/
 *.pyc
 .DS_Store
+.python/
+.uv-cache/
+.uv/
+.venv/
+__pycache__/
+datos/
+ia.env
+salida/

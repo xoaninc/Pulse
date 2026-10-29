@@ -29,7 +29,7 @@
       <div class="barra-busqueda">
         <input id="busqueda" type="search" placeholder="Busca lo que quieras: bolsa de plástico en un árbol, verja oxidada, zapatillas colgadas de cables…">
         <button id="btn-buscar">Buscar</button>
-        <button id="btn-ia-cat" class="sec oculto" title="Revisa las 30 primeras candidatas con la IA">✨ Revisar con IA</button>
+        <button id="btn-ia-cat" class="sec oculto" title="La IA puntúa las 12 primeras candidatas de esta categoría">✨ Revisar con IA</button>
       </div>
       <div id="sugerencias" class="chips"></div>
       <div id="titulo-rejilla" class="titulo-rejilla"></div>
@@ -71,6 +71,7 @@
           <select id="contraste"><option value="suave">Suave</option><option value="normal" selected>Normal</option><option value="alto">Alto</option></select>
         </label>
         <label class="check"><input type="checkbox" id="cabecera" checked> Cabecera con título, nombre y nº de lámina</label>
+        <label class="check"><input type="checkbox" id="sin-descargar"> No descargar originales de iCloud (más rápido; usa las previsualizaciones, algo menos nítidas)</label>
       </div>
       <div id="resumen-seleccion"></div>
       <button id="btn-generar" class="grande">Generar PDF y JPG</button>

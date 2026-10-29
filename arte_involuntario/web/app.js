@@ -545,10 +545,16 @@ async function abrirPaseo(id, modo = "abrir", k = null) {
     P.k = k;
     guardar();
   } else if (modo === "k") {
+    // nueva propuesta, pero las fotos que ya has trabajado (frase propia o recorte) se quedan
     const viejas = Object.fromEntries(P.fotos.map(f => [f.uuid, f]));
-    P.fotos = r.sugeridas.map(u => viejas[u] || nuevaFotoPaseo(fichas[u]));
+    const trabajadas = P.fotos.filter(f => fraseEditada(f) || recorteTocado(f));
+    const nuevas = r.sugeridas.map(u => viejas[u] || nuevaFotoPaseo(fichas[u]));
+    const ya = new Set(nuevas.map(f => f.uuid));
+    P.fotos = nuevas.concat(trabajadas.filter(f => !ya.has(f.uuid)));
+    ordenarPaseo();
     P.k = k;
     guardar();
+    if (P.fotos.length > k) toast(`${P.fotos.length} fotos: se conservan las que ya habías escrito o recortado.`);
   } else if (modo === "reiniciar") {
     P.fotos = propuesta();
     P.k = k;
@@ -558,13 +564,19 @@ async function abrirPaseo(id, modo = "abrir", k = null) {
   pintarPaseo();
 }
 
+function recorteTocado(f) {
+  const r = f.recorte || {};
+  return Math.abs((r.cx ?? 0.5) - 0.5) > 1e-3 || Math.abs((r.cy ?? 0.5) - 0.5) > 1e-3 || Math.abs((r.zoom ?? 1) - 1) > 1e-3;
+}
 function fraseEditada(f) {
-  const fi = fichaPaseo(f.uuid) || {};
-  return (f.frase || "").trim() && (f.frase || "").trim() !== (fi.frase || "").trim();
+  const frase = (f.frase || "").trim();
+  const auto = (f.auto !== undefined ? f.auto : (fichaPaseo(f.uuid) || {}).frase || "").trim();
+  return !!frase && frase !== auto;
 }
 
 function nuevaFotoPaseo(f) {
-  return { uuid: f.uuid, frase: f.frase, recorte: { cx: 0.5, cy: 0.5, zoom: 1 }, km: f.km, alt: f.alt, hora: f.hora };
+  // `auto` recuerda la sugerencia del ordenador: así sabemos si la frase la has escrito tú
+  return { uuid: f.uuid, frase: f.frase, auto: f.frase, recorte: { cx: 0.5, cy: 0.5, zoom: 1 }, km: f.km, alt: f.alt, hora: f.hora };
 }
 function datosFoto(f) {
   return [f.hora, f.km != null ? `km ${num(f.km)}` : "", f.alt != null ? `${Math.round(f.alt).toLocaleString("es-ES")} m` : ""].filter(Boolean).join(" · ");
@@ -702,7 +714,8 @@ async function generarLaminas() {
     if (d.estado === "trabajando") return;
     clearInterval(t);
     btn.disabled = false;
-    if (d.estado === "error") return;
+    if (d.estado === "error") { log.textContent = d.log.join("\n") || "Ha fallado la generación."; return; }
+    log.textContent = (d.log.join("\n") || "") + (d.log.length ? "\n" : "") + "Hecho.";
     mostrarResultado(d.resultado);
   }, 1000);
 }

@@ -20,7 +20,7 @@ ESCALA = 100.0  # escala de los logits de CLIP: 0.01 de coseno ≈ 1 «nat»
 # Pesos de cada ingrediente (ajustados con los ejemplos del libro mezclados con 1.000 fotos
 # cotidianas; ver tests/). z = parecido normalizado; especificidad = cuánto destaca esta
 # categoría sobre la siguiente mejor; contraste = frases propias frente a confusores.
-PESOS = {"z": 1.0, "especificidad": 1.0, "contraste": 0.3, "arte": 0.35,
+PESOS = {"z": 1.0, "especificidad": 0.5, "contraste": 0.3, "arte": 0.15,
          "etiquetas": 0.9, "estetica": 0.25, "exceso": 1.2}
 
 
