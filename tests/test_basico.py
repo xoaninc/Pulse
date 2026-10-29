@@ -202,6 +202,19 @@ def test_sugerencia_12_con_origen_y_final():
     assert fichas["u10"]["frase"] in ("Pasan nubes", "Un perro")
 
 
+def test_suceso_singular_frente_al_comun():
+    pa = _paseo_sintetico()
+    E = pa.ix.E.copy()
+    E[:40, 15] += 0.3          # «nubes»: sale en todas las fotos del paseo
+    E[5, 16] += 0.32           # el perro solo aparece en la foto 5 (algo menos parecido en absoluto)
+    pa.ix.E = E / np.linalg.norm(E, axis=1, keepdims=True)
+    pa.suc_sim = pa.ix.E @ pa.tx.get("sucesos").T
+    r = pa.sugerir(pa.detectar(min_fotos=8)[0]["id"], 12)
+    fichas = {f["uuid"]: f for f in r["todas"]}
+    assert fichas["u5"]["frase"] == "Un perro"
+    assert fichas["u6"]["frase"] == "Pasan nubes"
+
+
 def test_textos_fulton():
     assert frase_borrador("10:05", 3.25, 1150, "Pasan nubes") == "10:05 · km 3,2 · 1.150 m — Pasan nubes"
     f = [{"lugar": "Cercedilla", "fecha": "2025-05-11T10:00:00+02:00", "km": 0},

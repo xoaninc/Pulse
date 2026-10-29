@@ -285,14 +285,37 @@ class Paseos:
     def _palabra_principal(self, idx: list[int]) -> list[str]:
         if not self.sucesos or not self.suc_sim.shape[1]:
             return [""] * len(idx)
-        return [self.sucesos[int(np.argmax(self.suc_sim[i]))]["palabra"] for i in idx]
+        S, R = self._sucesos_de(idx)
+        return [self.sucesos[self._elegir(s, r)]["palabra"] for s, r in zip(S, R)]
+
+    def _sucesos_de(self, idx: list[int]) -> tuple[np.ndarray, np.ndarray]:
+        """Parecido de cada foto con cada suceso (S) y lo que la distingue del resto del paseo (R).
+        En un paseo por el monte todas las fotos se parecen a «sendero con sombras»: el suceso
+        singular es lo que pasa en esa foto y no en las demás."""
+        S = self.suc_sim[idx]
+        return S, (S - 0.5 * S.mean(axis=0) if len(idx) >= 4 else S)
+
+    @staticmethod
+    def _elegir(s: np.ndarray, r: np.ndarray, palabras=None, evitar: Counter | None = None) -> int:
+        """Entre los sucesos que de verdad se ven (≤ 0,025 del mejor parecido absoluto), el más
+        propio de esta foto; con `evitar`, cada vez que un suceso ya se ha usado pierde puntos y,
+        si ya va por dos, se busca otro algo más lejos (≤ 0,045) antes de repetirlo una tercera vez."""
+        posibles = np.flatnonzero(s >= s.max() - 0.025)
+        if evitar is None or palabras is None:
+            return int(posibles[np.argmax(r[posibles])])
+        libres = [int(j) for j in np.flatnonzero(s >= s.max() - 0.045) if evitar[palabras[j]] < 2]
+        cand = [int(j) for j in posibles if evitar[palabras[j]] < 2] or libres or [int(j) for j in posibles]
+        mejor = max(cand, key=lambda j: r[j] - 0.012 * evitar[palabras[j]])
+        evitar[palabras[mejor]] += 1
+        return mejor
 
     def fichas(self, idx: list[int]) -> list[dict]:
         kms = self.km_acumulados(idx)
+        S, R = self._sucesos_de(idx) if self.sucesos and self.suc_sim.shape[1] else (None, None)
         out = []
-        for i, km in zip(idx, kms):
+        for n, (i, km) in enumerate(zip(idx, kms)):
             f = self.ix.fotos[i]
-            suc = self._suceso(i)
+            suc = self._suceso(S[n], R[n]) if S is not None else None
             alt = f.get("alt")
             out.append({
                 "uuid": f["uuid"],
@@ -310,33 +333,28 @@ class Paseos:
             })
         return out
 
-    def _suceso(self, i: int, evitar: Counter | None = None) -> dict | None:
-        """El suceso que mejor describe la foto. Con `evitar`, entre los casi igual de buenos
-        (≤ 0,01 de diferencia) elige el menos repetido: variedad sin inventar lo que no se ve."""
-        if not self.sucesos or not self.suc_sim.shape[1]:
-            return None
-        s = self.suc_sim[i]
-        orden = np.argsort(-s)[:8]
-        mejor = int(orden[0])
-        if evitar is not None:
-            casi = [int(j) for j in orden if s[j] >= s[orden[0]] - 0.01]
-            mejor = min(casi, key=lambda j: (evitar[self.sucesos[j]["palabra"]], -s[j]))
-            evitar[self.sucesos[mejor]["palabra"]] += 1
-        d = self.sucesos[mejor]
-        return {"frase": d["frase"], "palabra": d["palabra"], "confianza": round(float(s[mejor]) * 100, 1)}
+    def _suceso(self, s: np.ndarray, r: np.ndarray, evitar: Counter | None = None) -> dict | None:
+        j = self._elegir(s, r, [d["palabra"] for d in self.sucesos], evitar)
+        d = self.sucesos[j]
+        return {"frase": d["frase"], "palabra": d["palabra"], "confianza": round(float(s[j]) * 100, 1)}
 
     def variar_sucesos(self, fichas: list[dict], elegidas: list[str]) -> None:
         """Reparte los sucesos entre las fotos elegidas evitando repetir la misma frase."""
-        evitar: Counter = Counter()
+        if not self.sucesos or not self.suc_sim.shape[1]:
+            return
+        idx = [self.ix.pos[f["uuid"]] for f in fichas if f["uuid"] in self.ix.pos]
+        if not idx:
+            return
+        S, R = self._sucesos_de(idx)
+        fila = {self.ix.uuids[i]: n for n, i in enumerate(idx)}
         por_uuid = {f["uuid"]: f for f in fichas}
+        evitar: Counter = Counter()
         for u in elegidas:
-            i = self.ix.pos.get(u)
-            f = por_uuid.get(u)
-            if i is None or f is None:
+            n, f = fila.get(u), por_uuid.get(u)
+            if n is None or f is None:
                 continue
-            suc = self._suceso(i, evitar)
-            if suc:
-                f["suceso"], f["frase"] = suc, suc["frase"]
+            suc = self._suceso(S[n], R[n], evitar)
+            f["suceso"], f["frase"] = suc, suc["frase"]
 
     def completar_altitudes(self, uuids: list[str]) -> None:
         """Lee la altitud del EXIF de los originales locales (Fotos no la guarda en su base)."""
